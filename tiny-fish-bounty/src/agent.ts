@@ -5,17 +5,21 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
-import { fmtDate, MODEL, TIMEZONE } from "./config.ts";
+import { calendarFor, markDone } from "./actions.ts";
+import { findApplication, prepApplication, prepSummary, saveApplication, setStatus, trackerSummary } from "./applications.ts";
+import type { CalItem } from "./calendar.ts";
+import { fmtDate, MODEL, MODEL_SUPPORTS_EFFORT, MODEL_SUPPORTS_FALLBACKS, TIMEZONE } from "./config.ts";
 import { clearHomeworkCache, upcomingHomework } from "./homework.ts";
 import { claude } from "./llm.ts";
 import { profileSummary } from "./onboarding.ts";
+import { say, type Effect, type Reply } from "./reply.ts";
 import { readCourseSiteDeep, upsertSite } from "./sources/courseSites.ts";
 import { getEvents } from "./sources/events.ts";
 import { loadListings, matchesPrefs, verifyPosting } from "./sources/internships.ts";
-import { save, type UserState } from "./store.ts";
+import { save, shortId, type MessageRef, type UserState } from "./store.ts";
 import { fetchPage, search } from "./tinyfish.ts";
 
-const SYSTEM = `You are Heel Buddy, an assistant a UNC Chapel Hill student texts over iMessage. You help with three things: homework deadlines (Canvas + professor course sites), internships (the Simplify Summer 2027 list), and campus events (HeelLife). You can also research anything on the live web.
+const SYSTEM = `You are iRameses, an assistant a UNC Chapel Hill student texts over iMessage. You help with homework deadlines (Canvas + professor course sites), internships (the Simplify Summer 2027 list, plus the student's own application tracker), campus events (HeelLife), reminders, and research on the live web.
 
 How to write:
 - This is a text thread. Plain text only: iMessage does not render markdown, so no asterisks, no # headings, no tables.
@@ -28,18 +32,30 @@ Trust rules (these matter more than anything else):
 - Never invent a date, link, company detail, or source. If a tool failed, say which source failed and share what did work.
 - If the tools don't have the answer, say so plainly and offer to look it up.
 - For general questions (what a company's internship is like, what a club does, how to do something), use search_web, then read_page on the 1-2 best results, and cite the links you used.
-- You can only read the web. You cannot submit assignments, RSVP, apply, email, or buy anything. If asked, say so and give the link so the student can do it. Nothing is ever booked, bought, or sent on their behalf.
+- You only read the web. You never submit assignments, RSVP, apply, fill in forms, email, or buy anything. If asked, say so and give the link so the student can do it.
+- Application essays: after prep_application, you may offer to draft answers, but only write drafts when the student says yes. Drafts are text for them to edit and paste themselves.
+- Calendar: you can't write to their calendar. add_to_calendar sends a calendar file they tap to add (they approve it with "Add"). Offer it after listing events or deadlines, but only call it once they say yes or name the items. After calling it, reply with one short line at most.
 - Never repeat the student's Canvas feed link.
 
 Tool tips:
-- check_posting opens the live job page in a real browser and takes about a minute. Use it when the student asks whether a posting is still open or wants its details, not for every listing.
-- "done with X" / "turned in X" means mark_done. Requests to change their setup (courses, course sites, brief time, alert preferences) mean update_settings.
+- check_posting and prep_application open real pages in a browser and take about a minute. Use them when the student asks, not for every listing.
+- "done with X" / "turned in X" → mark_done. "I applied to X" / "got an interview" / "got an offer" / "rejected" → update_application (save it first if it isn't tracked).
+- "remind me…" → set_reminder. "snooze" / "remind me later" about something you just sent → set_reminder with that content; if no time is given, use 2 hours from now and say so.
+- Requests to change their setup (courses, course sites, brief time, alert preferences) → update_settings.
+- The student can tap-back your texts: 👍 marks homework done or completes a reminder, ❤️ saves internships or adds events/deadlines to their calendar, 👎 hides a company, ❓ asks you to explain. Mention this only if they ask how.
 - When the student shares a lasting preference or fact about themselves, save it with remember.`;
 
 interface ToolContext {
   user: UserState;
   /** Send an interim text (e.g. "checking the live posting…") while a slow tool runs. */
   notify: (text: string) => Promise<void>;
+  /** Bubbles to send after Claude's reply (calendar files, confetti). */
+  extras: Reply[];
+  effect?: Effect;
+  /** What tools listed this turn, so a tapback on the reply can act on the items it mentions. */
+  listed: { events: Map<string, string>; jobs: Map<string, string>; assignments: Map<string, string> };
+  /** Web pages read this turn (read_page), cited automatically if the reply forgets to. */
+  pagesRead: Set<string>;
 }
 
 /** Tool results go back to Claude as JSON; errors become a readable message instead of crashing the turn. */
@@ -69,9 +85,10 @@ function buildTools(ctx: ToolContext) {
             return { error: "No homework sources set up yet. The student can text 'settings' or send their Canvas calendar feed link." };
           }
           const { items, failed } = await upcomingHomework(user, input.days_ahead, input.refresh ?? false);
+          for (const a of items) ctx.listed.assignments.set(a.key, a.title);
           return {
             now: fmtDate(new Date()),
-            items: items.map((a) => ({ course: a.course, title: a.title, due: fmtDate(a.due), url: a.url, source: a.source })),
+            items: items.map((a) => ({ id: a.key, course: a.course, title: a.title, due: fmtDate(a.due), url: a.url, source: a.source })),
             failed_sources: failed,
           };
         }),
@@ -83,18 +100,19 @@ function buildTools(ctx: ToolContext) {
       inputSchema: z.object({ titles: z.array(z.string()).describe("Assignment titles (or distinctive parts of them)") }),
       run: (input) =>
         safe("mark_done", async () => {
-          const { items } = await upcomingHomework(user, 60);
-          const marked: string[] = [];
+          const { items } = await upcomingHomework(user, 60, false, true);
+          const keys: string[] = [];
+          const alreadyDone: string[] = [];
+          const notFound: string[] = [];
           for (const t of input.titles) {
-            const needle = t.toLowerCase();
-            const hit = items.find((a) => `${a.course} ${a.title}`.toLowerCase().includes(needle));
-            if (hit && !user.doneAssignments.includes(hit.key)) {
-              user.doneAssignments.push(hit.key);
-              marked.push(`${hit.course}: ${hit.title}`);
-            }
+            const hit = items.find((a) => `${a.course} ${a.title}`.toLowerCase().includes(t.toLowerCase()));
+            if (!hit) notFound.push(t);
+            else if (user.doneAssignments.includes(hit.key)) alreadyDone.push(`${hit.course}: ${hit.title}`);
+            else keys.push(hit.key);
           }
-          save();
-          return { marked, not_found: input.titles.length - marked.length };
+          const { marked, replies } = await markDone(user, keys);
+          ctx.extras.push(...replies);
+          return { marked, already_done: alreadyDone, not_found: notFound, week_is_clear: replies.length > 0 };
         }),
     }),
 
@@ -120,7 +138,9 @@ function buildTools(ctx: ToolContext) {
             eveningsOnly: input.evenings_only,
             limit: 10,
           });
+          for (const e of events) ctx.listed.events.set(e.id, e.url);
           return events.map((e) => ({
+            id: e.id,
             name: e.name,
             when: fmtDate(e.start),
             where: e.location,
@@ -151,7 +171,9 @@ function buildTools(ctx: ToolContext) {
             .filter((j) => new Date(j.postedAt).getTime() >= since)
             .filter((j) => matchesPrefs(j, input.use_my_preferences ? user.internships : noPrefs, input.query))
             .slice(0, input.limit ?? 6);
+          for (const j of jobs) ctx.listed.jobs.set(j.id, j.url);
           return jobs.map((j) => ({
+            id: j.id,
             company: j.company,
             title: j.title,
             category: j.category,
@@ -176,6 +198,168 @@ function buildTools(ctx: ToolContext) {
     }),
 
     betaZodTool({
+      name: "save_application",
+      description: "Add an internship to the student's application tracker (status 'saved').",
+      inputSchema: z.object({ company: z.string(), title: z.string(), url: z.string().describe("Posting URL from get_internships or the student") }),
+      run: (input) =>
+        safe("save_application", async () => {
+          const listing = (await loadListings()).find((j) => j.url === input.url);
+          const { app, isNew } = saveApplication(user, { ...input, listingId: listing?.id });
+          return { id: app.id, status: app.status, already_tracked: !isNew };
+        }),
+    }),
+
+    betaZodTool({
+      name: "update_application",
+      description: "Change a tracked application's status.",
+      inputSchema: z.object({
+        company_or_id: z.string(),
+        status: z.enum(["saved", "applied", "interviewing", "offer", "rejected", "closed"]),
+      }),
+      run: (input) =>
+        safe("update_application", async () => {
+          const app = findApplication(user, input.company_or_id);
+          if (!app) return { error: `No tracked application matches "${input.company_or_id}". Save it first with save_application.` };
+          setStatus(user, app, input.status);
+          if (input.status === "offer") ctx.extras.push(say(`🎆 An offer from ${app.company}!! So proud of you.`, undefined, "fireworks"));
+          return { id: app.id, company: app.company, status: app.status };
+        }),
+    }),
+
+    betaZodTool({
+      name: "list_applications",
+      description: "The student's application tracker with statuses and any prep results.",
+      inputSchema: z.object({}),
+      run: () =>
+        safe("list_applications", async () =>
+          user.applications.map((a) => ({
+            id: a.id,
+            company: a.company,
+            title: a.title,
+            status: a.status,
+            saved: fmtDate(a.savedAt),
+            applied: a.appliedAt ? fmtDate(a.appliedAt) : null,
+            deadline: a.prep?.deadline || null,
+            prepped: !!a.prep,
+            url: a.url,
+          })),
+        ),
+    }),
+
+    betaZodTool({
+      name: "prep_application",
+      description:
+        "Open the real application form in a browser (TinyFish Agent) and list its questions, required documents and deadline. Read-only: never fills in or submits anything. Takes ~1-2 minutes. Saves the job to the tracker if needed.",
+      inputSchema: z.object({
+        company_or_id: z.string().optional().describe("A tracked application"),
+        url: z.string().optional().describe("Posting URL, if it isn't tracked yet"),
+        company: z.string().optional(),
+        title: z.string().optional(),
+      }),
+      run: (input) =>
+        safe("prep_application", async () => {
+          let app = input.company_or_id ? findApplication(user, input.company_or_id) : undefined;
+          if (!app && input.url) app = saveApplication(user, { company: input.company ?? "Unknown", title: input.title ?? "Internship", url: input.url }).app;
+          if (!app) return { error: "Need a tracked application or a posting URL." };
+          await ctx.notify(`Opening the ${app.company} application to see what it asks… (~1-2 min) 📝`);
+          const prep = await prepApplication(app.url);
+          app.prep = prep;
+          save();
+          return { summary_for_student: prepSummary(app, prep), ...prep };
+        }),
+    }),
+
+    betaZodTool({
+      name: "set_reminder",
+      description: "Text the student a reminder at an exact time. Also used for 'snooze'.",
+      inputSchema: z.object({
+        text: z.string().describe("What to remind them about, short"),
+        at_iso: z.string().describe("When, ISO 8601 with offset, computed from 'Right now' in your context"),
+      }),
+      run: (input) =>
+        safe("set_reminder", async () => {
+          const at = new Date(input.at_iso).getTime();
+          if (Number.isNaN(at)) return { error: "Couldn't understand that time." };
+          if (at < Date.now() - 60_000) return { error: "That time is in the past." };
+          const r = { id: shortId(), text: input.text, at, createdAt: Date.now() };
+          user.reminders.push(r);
+          save();
+          return { id: r.id, when: fmtDate(at) };
+        }),
+    }),
+
+    betaZodTool({
+      name: "list_reminders",
+      description: "Upcoming reminders the student has set.",
+      inputSchema: z.object({}),
+      run: () =>
+        safe("list_reminders", async () =>
+          user.reminders.filter((r) => !r.sentAt && !r.done).map((r) => ({ id: r.id, text: r.text, when: fmtDate(r.at) })),
+        ),
+    }),
+
+    betaZodTool({
+      name: "cancel_reminder",
+      description: "Cancel a reminder by id or by words in its text.",
+      inputSchema: z.object({ id_or_text: z.string() }),
+      run: (input) =>
+        safe("cancel_reminder", async () => {
+          const q = input.id_or_text.toLowerCase();
+          const r = user.reminders.find((x) => !x.done && (x.id === input.id_or_text || x.text.toLowerCase().includes(q)));
+          if (!r) return { error: "No matching reminder." };
+          r.done = true;
+          save();
+          return { cancelled: r.text };
+        }),
+    }),
+
+    betaZodTool({
+      name: "add_to_calendar",
+      description:
+        "Send a calendar file the student taps to add to Apple Calendar (they approve with 'Add'). Build it from ids returned by get_events / get_homework, or custom items with times the student gave you. Only call after the student asked or said yes.",
+      inputSchema: z.object({
+        event_ids: z.array(z.string()).optional().describe("HeelLife event ids from get_events"),
+        assignment_ids: z.array(z.string()).optional().describe("Homework ids from get_homework"),
+        assignment_titles: z
+          .array(z.string())
+          .optional()
+          .describe("Or name assignments (e.g. 'ethics assignment'); matched against everything due in the next 60 days"),
+        custom: z
+          .array(
+            z.object({
+              title: z.string(),
+              start_iso: z.string(),
+              end_iso: z.string().optional(),
+              location: z.string().optional(),
+            }),
+          )
+          .optional()
+          .describe("Only for times the student told you (e.g. their interview)"),
+      }),
+      run: (input) =>
+        safe("add_to_calendar", async () => {
+          const custom: CalItem[] = [];
+          for (const c of input.custom ?? []) {
+            const start = new Date(c.start_iso);
+            if (Number.isNaN(start.getTime())) continue;
+            const end = c.end_iso ? new Date(c.end_iso) : new Date(start.getTime() + 60 * 60_000);
+            custom.push({ uid: `custom-${shortId()}`, title: c.title, start, end, location: c.location, alarms: [30] });
+          }
+          const assignmentKeys = [...(input.assignment_ids ?? [])];
+          if (input.assignment_titles?.length) {
+            const { items } = await upcomingHomework(user, 60);
+            for (const t of input.assignment_titles) {
+              const hit = items.find((a) => `${a.course} ${a.title}`.toLowerCase().includes(t.toLowerCase()));
+              if (hit) assignmentKeys.push(hit.key);
+            }
+          }
+          const { replies, added, missing } = await calendarFor(user, { events: input.event_ids, assignments: assignmentKeys, custom });
+          ctx.extras.push(...replies);
+          return { sent_calendar_file_with: added, not_found: missing, note: "The student still has to tap Add. Keep your reply to one short line." };
+        }),
+    }),
+
+    betaZodTool({
       name: "search_web",
       description: "Search the live web (TinyFish Search). Returns titles, URLs and snippets.",
       inputSchema: z.object({
@@ -195,6 +379,7 @@ function buildTools(ctx: ToolContext) {
       run: (input) =>
         safe("read_page", async () => {
           const page = await fetchPage(input.url, { format: "markdown", ttl: 3600, purpose: input.question });
+          ctx.pagesRead.add(page.url || input.url);
           return { url: page.url || input.url, title: page.title, text: page.text.slice(0, 25_000) };
         }),
     }),
@@ -217,6 +402,7 @@ function buildTools(ctx: ToolContext) {
         internship_roles: z.array(z.enum(["Software", "AI/ML/Data", "Quant", "Product", "Hardware"])).optional(),
         internship_locations: z.array(z.string()).optional(),
         needs_sponsorship: z.boolean().optional(),
+        unmute_companies: z.array(z.string()).optional().describe("Companies to show again after a 👎"),
         event_keywords: z.array(z.string()).optional(),
         free_food: z.boolean().optional(),
         evenings_only: z.boolean().optional(),
@@ -263,6 +449,10 @@ function buildTools(ctx: ToolContext) {
           if (input.internship_roles) user.internships.roles = input.internship_roles;
           if (input.internship_locations) user.internships.locations = input.internship_locations;
           if (input.needs_sponsorship !== undefined) user.internships.needsSponsorship = input.needs_sponsorship;
+          if (input.unmute_companies) {
+            const un = input.unmute_companies.map((c) => c.toLowerCase());
+            user.internships.excludeCompanies = user.internships.excludeCompanies.filter((c) => !un.includes(c.toLowerCase()));
+          }
           if (input.event_keywords) user.events.keywords = input.event_keywords;
           if (input.free_food !== undefined) user.events.freeFood = input.free_food;
           if (input.evenings_only !== undefined) user.events.eveningsOnly = input.evenings_only;
@@ -289,8 +479,16 @@ function buildTools(ctx: ToolContext) {
 
 function context(user: UserState): string {
   const now = new Date().toLocaleString("en-US", { timeZone: TIMEZONE, dateStyle: "full", timeStyle: "short" });
+  const offset = new Date().toLocaleString("en-US", { timeZone: TIMEZONE, timeZoneName: "longOffset" }).split(" ").pop();
+  const apps = user.applications.length
+    ? `\n\nApplication tracker:\n${user.applications.map((a) => `- ${a.company}: ${a.title} [${a.status}] id=${a.id}`).join("\n")}`
+    : "";
+  const reminders = user.reminders.filter((r) => !r.sentAt && !r.done);
+  const rem = reminders.length ? `\n\nPending reminders:\n${reminders.map((r) => `- ${fmtDate(r.at)}: ${r.text}`).join("\n")}` : "";
   return (
-    `Right now: ${now} (${TIMEZONE}).\n\n${profileSummary(user)}` +
+    `Right now: ${now} (${TIMEZONE}, ${offset}).\n\n${profileSummary(user)}` +
+    apps +
+    rem +
     (user.facts.length ? `\n\nThings the student told you:\n${user.facts.map((f) => `- ${f}`).join("\n")}` : "")
   );
 }
@@ -302,30 +500,81 @@ function historyMessages(user: UserState): Anthropic.Beta.BetaMessageParam[] {
   return msgs;
 }
 
-export async function chat(user: UserState, text: string, notify: ToolContext["notify"]): Promise<string> {
+/** Append the current message unless the caller already put it in history (bot.ts does). */
+function withCurrentMessage(msgs: Anthropic.Beta.BetaMessageParam[], text: string): Anthropic.Beta.BetaMessageParam[] {
+  const last = msgs.at(-1);
+  if (last?.role === "user" && last.content === text) return msgs;
+  return [...msgs, { role: "user", content: text }];
+}
+
+/** A tapback on the reply acts on the items it actually mentions (matched by link or title). */
+function refFor(reply: string, listed: ToolContext["listed"]): MessageRef | undefined {
+  const lower = reply.toLowerCase();
+  const events = [...listed.events].filter(([, url]) => reply.includes(url)).map(([id]) => id);
+  const jobs = [...listed.jobs].filter(([, url]) => reply.includes(url)).map(([id]) => id);
+  const assignments = [...listed.assignments].filter(([, title]) => lower.includes(title.toLowerCase())).map(([key]) => key);
+  if (!events.length && !jobs.length && !assignments.length) return { kind: "chat", text: reply };
+  return { kind: "chat", events, jobs, assignments, text: reply };
+}
+
+export interface ChatResult {
+  text: string;
+  ref?: MessageRef;
+  /** Bubbles to send after the reply: calendar files, confetti, fireworks. */
+  extras: Reply[];
+}
+
+export async function chat(user: UserState, text: string, notify: ToolContext["notify"]): Promise<ChatResult> {
+  const ctx: ToolContext = {
+    user,
+    notify,
+    extras: [],
+    listed: { events: new Map(), jobs: new Map(), assignments: new Map() },
+    pagesRead: new Set(),
+  };
   const final = await claude.beta.messages.toolRunner({
     model: MODEL,
     max_tokens: 16000,
-    output_config: { effort: "low" },
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
+    ...(MODEL_SUPPORTS_EFFORT ? { output_config: { effort: "low" as const } } : {}),
+    ...(MODEL_SUPPORTS_FALLBACKS ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
     // Stable prefix (tools + SYSTEM) is cached; the per-turn context block comes after the breakpoint.
     system: [
       { type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } },
       { type: "text", text: context(user) },
     ],
-    tools: buildTools({ user, notify }),
-    messages: [...historyMessages(user), { role: "user", content: text }],
-    max_iterations: 8,
+    tools: buildTools(ctx),
+    messages: withCurrentMessage(historyMessages(user), text),
+    max_iterations: 10,
   });
 
   if (final.stop_reason === "refusal") {
-    return "Sorry, I can't help with that one. Ask me about homework, internships, campus events, or anything else you want looked up.";
+    return {
+      text: "Sorry, I can't help with that one. Ask me about homework, internships, campus events, or anything else you want looked up.",
+      extras: [],
+    };
   }
-  const reply = final.content
-    .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("\n")
-    .trim();
-  return reply || "Hmm, I got tangled up there. Mind asking that another way?";
+  let reply = plainText(
+    final.content
+      .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("\n")
+      .trim(),
+  );
+  if (!reply) reply = "Hmm, I got tangled up there. Mind asking that another way?";
+  // Never an unsourced web answer: if the reply leans on pages it read but links none, add them.
+  if (ctx.pagesRead.size && !/https?:\/\//.test(reply)) {
+    reply += `\n\nSources:\n${[...ctx.pagesRead].slice(0, 3).join("\n")}`;
+  }
+  return { text: reply, ref: refFor(reply, ctx.listed), extras: ctx.extras };
+}
+
+/** iMessage shows markdown literally, so strip it whatever the model writes. */
+function plainText(s: string): string {
+  return s
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s*[-*]\s+/gm, "• ")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, "$1: $2")
+    .replace(/`([^`]+)`/g, "$1");
 }

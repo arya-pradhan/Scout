@@ -1,15 +1,17 @@
-// Routes one inbound text to onboarding, a quick command, or the Claude chat agent.
-// Platform-agnostic: index.ts wires it to iMessage, scripts/chat.ts to a terminal.
+// Routes one inbound text (or tapback) to onboarding, a quick command, or the Claude chat
+// agent. Platform-agnostic: index.ts wires it to iMessage, scripts/chat.ts to a terminal.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { chat } from "./agent.ts";
-import { buildBrief } from "./brief.ts";
-import { currentPrompt, handleOnboarding, isOnboarding, profileSummary, startOnboarding, type Reply } from "./onboarding.ts";
+import { trackerSummary } from "./applications.ts";
+import { buildBrief, buildWeekAhead, repliesText } from "./brief.ts";
+import { currentPrompt, handleOnboarding, isOnboarding, profileSummary, startOnboarding } from "./onboarding.ts";
+import { handleReaction } from "./reactions.ts";
+import { say, type Reply, type Send } from "./reply.ts";
 import { pushHistory, resetUser, save, type UserState } from "./store.ts";
 import { TinyFishError } from "./tinyfish.ts";
 
-export type { Reply };
-export type Send = (replies: Reply[]) => Promise<void>;
+export type { Reply, Send };
 
 /** Texts that look like a side question during setup ("what can you do?"), not an answer. */
 function isSideQuestion(user: UserState, text: string): boolean {
@@ -22,6 +24,20 @@ function friendlyError(err: unknown): string {
   if (err instanceof Anthropic.RateLimitError) return "I'm getting a lot of texts right now. Give me a minute and try again?";
   if (err instanceof Anthropic.APIError) return "My brain (Claude) is having a moment. Try again in a minute?";
   return "Sorry, something broke on my end. Try again in a sec?";
+}
+
+/** Interim texts from slow tools are part of the conversation too. */
+const notifier = (user: UserState, send: Send) => async (t: string) => {
+  pushHistory(user, "assistant", t);
+  await send([say(t)]);
+};
+
+async function sendBrief(user: UserState, send: Send): Promise<void> {
+  const brief = await buildBrief(user, { greeting: true });
+  if (!brief) return;
+  pushHistory(user, "assistant", repliesText(brief));
+  save();
+  await send(brief);
 }
 
 export async function handleText(user: UserState, rawText: string, send: Send): Promise<void> {
@@ -44,19 +60,15 @@ export async function handleText(user: UserState, rawText: string, send: Send): 
 
     if (isOnboarding(user)) {
       if (isSideQuestion(user, text)) {
-        const answer = await chat(user, text, (t) => send([{ text: t }]));
-        await send([{ text: answer }, ...currentPrompt(user)]);
+        const answer = await chat(user, text, notifier(user, send));
+        await send([say(answer.text), ...currentPrompt(user)]);
         return;
       }
-      const { replies, finished } = await handleOnboarding(user, text, (t) => send([{ text: t }]));
+      const { replies, finished } = await handleOnboarding(user, text, (t) => send([say(t)]));
       await send(replies);
       if (finished) {
         user.internshipsSince = Date.now();
-        const brief = await buildBrief(user, { greeting: true });
-        if (brief) {
-          pushHistory(user, "assistant", brief);
-          await send([{ text: brief }]);
-        }
+        await sendBrief(user, send);
         save();
       }
       return;
@@ -64,28 +76,55 @@ export async function handleText(user: UserState, rawText: string, send: Send): 
 
     // Quick commands that don't need Claude.
     if (/^(settings|setup|my settings)$/i.test(text)) {
-      await send([{ text: `${profileSummary(user)}\n\nTell me what to change, e.g. "brief at 9am" or "add a site for COMP 301: <link>". Text "reset" to redo setup.` }]);
+      await send([say(`${profileSummary(user)}\n\nTell me what to change, e.g. "brief at 9am" or "add a site for COMP 301: <link>". Text "reset" to redo setup.`)]);
       return;
     }
     if (/^(brief|morning brief|what'?s up today)$/i.test(text)) {
-      const brief = (await buildBrief(user, { greeting: true }))!;
-      pushHistory(user, "assistant", brief);
+      await sendBrief(user, send);
+      return;
+    }
+    if (/^(week|my week|this week|week ahead|plan my week)$/i.test(text)) {
+      const plan = await buildWeekAhead(user);
+      const replies = plan ?? [say("Your week looks clear: nothing due, nothing saved, no matching events. 😌")];
+      pushHistory(user, "assistant", repliesText(replies));
       save();
-      await send([{ text: brief }]);
+      await send(replies);
+      return;
+    }
+    if (/^(apps|my apps|applications|my applications|tracker)$/i.test(text)) {
+      const summary = trackerSummary(user);
+      pushHistory(user, "assistant", summary);
+      save();
+      await send([say(summary, { kind: "text", text: summary })]);
       return;
     }
 
     pushHistory(user, "user", text);
-    const reply = await chat(user, text, async (t) => {
-      pushHistory(user, "assistant", t);
-      await send([{ text: t }]);
-    });
-    pushHistory(user, "assistant", reply);
+    const result = await chat(user, text, notifier(user, send));
+    pushHistory(user, "assistant", result.text);
     save();
-    await send([{ text: reply }]);
+    await send([say(result.text, result.ref), ...result.extras]);
   } catch (err) {
     console.error(`[bot] error for ${user.id}:`, err);
     save();
-    await send([{ text: friendlyError(err) }]);
+    await send([say(friendlyError(err))]);
+  }
+}
+
+/** A tapback on one of the bot's bubbles. */
+export async function handleTapback(
+  user: UserState,
+  emoji: string,
+  targetId: string | undefined,
+  targetText: string | undefined,
+  send: Send,
+): Promise<void> {
+  if (isOnboarding(user)) return;
+  try {
+    const ref = targetId ? user.messageRefs[targetId] : undefined;
+    await handleReaction(user, emoji, ref, targetText, send);
+  } catch (err) {
+    console.error(`[bot] tapback error for ${user.id}:`, err);
+    await send([say(friendlyError(err))]);
   }
 }

@@ -55,8 +55,8 @@ async function allHomework(user: UserState, fresh: boolean): Promise<HomeworkRes
   return result;
 }
 
-/** Upcoming, not-yet-done work due within `days`. */
-export async function upcomingHomework(user: UserState, days = 7, fresh = false): Promise<HomeworkResult> {
+/** Upcoming work due within `days` (not-yet-done only, unless `includeDone`). */
+export async function upcomingHomework(user: UserState, days = 7, fresh = false, includeDone = false): Promise<HomeworkResult> {
   const { items, failed } = await allHomework(user, fresh);
   const now = Date.now();
   const until = now + days * 24 * 3600_000;
@@ -66,7 +66,7 @@ export async function upcomingHomework(user: UserState, days = 7, fresh = false)
     items: items.filter((a) => {
       const t = new Date(a.due).getTime();
       if (t < now || t > until) return false;
-      if (user.doneAssignments.includes(a.key)) return false;
+      if (!includeDone && user.doneAssignments.includes(a.key)) return false;
       // Only courses the user confirmed (Canvas feeds include old/extra calendars).
       return courseCodes.size === 0 || courseCodes.has(a.course) || a.source !== "canvas";
     }),

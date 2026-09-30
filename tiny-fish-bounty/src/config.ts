@@ -1,6 +1,20 @@
 // Runtime settings read from .env (see .env.example).
 
-export const MODEL = process.env.CLAUDE_MODEL ?? "claude-sonnet-5-5";
+export const MODEL = process.env.CLAUDE_MODEL ?? "claude-haiku-4-5";
+
+/**
+ * Reading deadlines off messy course sites needs careful date reasoning ("EOW", times the
+ * page's JavaScript showed in UTC, old semesters on the same page). Haiku got these wrong
+ * in testing, so this one job uses a stronger model. It only runs when a site's text
+ * changes (see courseSites.ts), so the cost stays small.
+ */
+export const SITE_MODEL = process.env.SITE_MODEL ?? "claude-sonnet-5-5";
+
+/** Request options that only newer models accept (Haiku 4.5 rejects `effort`; server-side fallback is for 5.x models). */
+export const supportsEffort = (model: string) => /opus-5|sonnet-5|fable|mythos|opus-4-[5678]|sonnet-4-6/.test(model);
+export const supportsFallbacks = (model: string) => /opus-5|sonnet-5-5|fable/.test(model);
+export const MODEL_SUPPORTS_EFFORT = supportsEffort(MODEL);
+export const MODEL_SUPPORTS_FALLBACKS = supportsFallbacks(MODEL);
 
 /** Everything the bot says about dates is in this timezone. */
 export const TIMEZONE = process.env.TZ_NAME ?? "America/New_York";
@@ -51,6 +65,11 @@ export function greeting(d = new Date()): string {
 /** Hour of day (0-23) in the bot's timezone. */
 export function localHour(d = new Date()): number {
   return Number(d.toLocaleString("en-US", { timeZone: TIMEZONE, hour: "numeric", hourCycle: "h23" }));
+}
+
+/** "Sunday", "Monday", … in the bot's timezone. */
+export function localWeekday(d = new Date()): string {
+  return d.toLocaleDateString("en-US", { timeZone: TIMEZONE, weekday: "long" });
 }
 
 /** YYYY-MM-DD in the bot's timezone. */

@@ -24,6 +24,10 @@ export interface Internship {
 
 let cached: Internship[] = [];
 
+export async function getListing(id: string): Promise<Internship | undefined> {
+  return (await loadListings()).find((j) => j.id === id);
+}
+
 export async function loadListings(): Promise<Internship[]> {
   const meta = internshipCache();
   const headers: Record<string, string> = {};
@@ -55,6 +59,7 @@ export async function loadListings(): Promise<Internship[]> {
 
 export function matchesPrefs(job: Internship, prefs: InternshipPrefs, query?: string): boolean {
   const hay = `${job.company} ${job.title} ${job.category}`.toLowerCase();
+  if ((prefs.excludeCompanies ?? []).some((c) => c.toLowerCase() === job.company.toLowerCase())) return false;
   if (query && !query.toLowerCase().split(/\s+/).every((w) => hay.includes(w))) return false;
   if (prefs.roles.length && !prefs.roles.some((r) => job.category.toLowerCase().includes(r.toLowerCase()) || hay.includes(r.toLowerCase()))) {
     return false;
@@ -90,7 +95,7 @@ Do NOT click Apply, do NOT sign in, do NOT fill in or submit any form. If you ca
     outputSchema: {
       type: "object",
       properties: {
-        accepting_applications: { type: ["boolean", "null"] },
+        accepting_applications: { type: "boolean", nullable: true },
         deadline: { type: "string", description: "Deadline as written, or empty string" },
         location: { type: "string" },
         pay: { type: "string", description: "Pay as written, or empty string" },

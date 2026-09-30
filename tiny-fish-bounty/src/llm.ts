@@ -3,23 +3,24 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { z } from "zod";
-import { MODEL } from "./config.ts";
+import { MODEL, supportsEffort } from "./config.ts";
 
 export const claude = new Anthropic();
 
 /**
  * Ask Claude to turn messy input (a user's text, a scraped page) into typed data.
- * Low effort: these are small, well-specified extraction jobs.
+ * Low effort where supported: these are small, well-specified extraction jobs.
  */
 export async function extract<T extends z.ZodType>(
   schema: T,
   instructions: string,
   input: string,
+  model = MODEL,
 ): Promise<z.infer<T>> {
   const response = await claude.messages.parse({
-    model: MODEL,
+    model,
     max_tokens: 16000,
-    output_config: { effort: "low", format: zodOutputFormat(schema) },
+    output_config: { ...(supportsEffort(model) ? { effort: "low" as const } : {}), format: zodOutputFormat(schema) },
     system: instructions,
     messages: [{ role: "user", content: input }],
   });

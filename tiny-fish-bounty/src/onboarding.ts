@@ -7,11 +7,8 @@ import { courseCodeFrom, looksLikeCanvasFeed, readCanvasFeed } from "./sources/c
 import { findCourseSite, readCourseSiteDeep, upsertSite } from "./sources/courseSites.ts";
 import { fmtDate } from "./config.ts";
 import { extract } from "./llm.ts";
+import { say, type Reply } from "./reply.ts";
 import { save, type OnboardingStep, type UserState } from "./store.ts";
-
-export type Reply = { text: string } | { link: string } | { contactCard: true };
-
-const say = (text: string): Reply => ({ text });
 const URL_RE = /https?:\/\/[^\s<>"]+/i;
 const YES_RE = /^(y|ya|yes|yep|yeah|yup|sure|ok|okay|correct|right|looks good|lgtm|perfect|👍)(\b|$)/i;
 const NEXT_RE = /^(next|no|nope|nah|done|skip|that'?s it|none)\b/i;
@@ -381,7 +378,15 @@ export async function handleOnboarding(
   save();
 
   if (user.onboarding.step === "done") {
-    replies.push(say(`All set 🎉\n\n${profileSummary(user)}\n\nText "settings" anytime to see or change this. Pulling your first brief now…`));
+    replies.push(say("All set! 🎉", undefined, "confetti"));
+    replies.push(
+      say(
+        `${profileSummary(user)}\n\n` +
+          'Text "settings" anytime to change this.\n' +
+          "Tip: tap-back 👍 on a reminder to mark it done, ❤️ an internship to save it, ❤️ an event to add it to your calendar.\n\n" +
+          "Pulling your first brief now…",
+      ),
+    );
     return { replies, finished: true };
   }
   return { replies, finished: false };

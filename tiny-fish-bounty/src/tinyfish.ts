@@ -184,17 +184,43 @@ export interface AgentOptions {
   profileId?: string;
 }
 
+/**
+ * The Agent accepts a subset of JSON Schema: no `description` keys and no type arrays
+ * (use `nullable: true`). Normalize so callers can write ordinary schemas.
+ */
+export function agentSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(agentSchema);
+  if (!schema || typeof schema !== "object") return schema;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === "description") continue;
+    if (key === "type" && Array.isArray(value)) {
+      const types = value.filter((t) => t !== "null");
+      out.type = types[0];
+      if (types.length !== value.length) out.nullable = true;
+      continue;
+    }
+    // Inside `properties`, keys are field names (a field may be called "description").
+    out[key] =
+      key === "properties" && value && typeof value === "object"
+        ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, agentSchema(v)]))
+        : agentSchema(value);
+  }
+  return out;
+}
+
 export async function runAgent<T = unknown>(opts: AgentOptions): Promise<AgentRun<T>> {
   const body: Record<string, unknown> = {
     url: opts.url,
     goal: opts.goal,
     browser_profile: opts.stealth ? "stealth" : "lite",
     agent_config: {
-      max_steps: opts.maxSteps ?? 25,
       max_duration_seconds: opts.maxDurationSeconds ?? 120,
+      // Custom step limits need TinyFish's beta program; opt in with TINYFISH_CUSTOM_STEPS=1.
+      ...(process.env.TINYFISH_CUSTOM_STEPS === "1" && opts.maxSteps ? { max_steps: opts.maxSteps } : {}),
     },
   };
-  if (opts.outputSchema) body.output_schema = opts.outputSchema;
+  if (opts.outputSchema) body.output_schema = agentSchema(opts.outputSchema);
   if (opts.profileId) Object.assign(body, { use_profile: true, profile_id: opts.profileId });
 
   const timeoutMs = ((opts.maxDurationSeconds ?? 120) + 30) * 1000;

@@ -41,6 +41,35 @@ function stripHtml(html: string): string {
 
 type EventData = { value?: Array<Record<string, unknown>> };
 
+/** Every event we've shown, so a tapback or "add #2 to my calendar" can find it again. */
+const byId = new Map<string, CampusEvent>();
+
+export async function getEventById(id: string): Promise<CampusEvent | undefined> {
+  const hit = byId.get(id);
+  if (hit) return hit;
+  const res = await fetch(`https://heellife.unc.edu/api/discovery/event/${encodeURIComponent(id)}`, {
+    headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) return undefined;
+  const e = (await res.json()) as Record<string, unknown>;
+  const address = e.address as { name?: string; address?: string } | undefined;
+  const ev: CampusEvent = {
+    id: String(e.id),
+    name: String(e.name ?? ""),
+    org: String(e.organizationName ?? ""),
+    location: address?.name ?? address?.address ?? "TBA",
+    start: new Date(String(e.startsOn)).toISOString(),
+    end: new Date(String(e.endsOn)).toISOString(),
+    perks: ((e.benefits as string[] | undefined) ?? []).map((b) => (b === "FreeFood" ? "Free Food" : b)),
+    categories: [],
+    summary: stripHtml(String(e.description ?? "")).slice(0, 280),
+    url: `https://heellife.unc.edu/event/${String(e.id)}`,
+  };
+  byId.set(ev.id, ev);
+  return ev;
+}
+
 // 10-minute cache: events don't change minute to minute, and the window is rounded so it hits.
 const cache = new Map<string, { at: number; data: EventData }>();
 
@@ -87,6 +116,7 @@ export async function getEvents(q: EventQuery = {}): Promise<CampusEvent[]> {
       summary: stripHtml(String(e.description ?? "")).slice(0, 280),
       url: `https://heellife.unc.edu/event/${String(e.id)}`,
     };
+    byId.set(ev.id, ev);
     if (q.eveningsOnly) {
       const hour = Number(start.toLocaleString("en-US", { timeZone: TIMEZONE, hour: "numeric", hourCycle: "h23" }));
       if (hour < 17) continue;

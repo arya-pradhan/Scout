@@ -33,6 +33,56 @@ export interface InternshipPrefs {
   remoteOk: boolean;
   needsSponsorship: boolean;
   alerts: boolean;
+  /** Companies muted with a 👎 tapback. */
+  excludeCompanies: string[];
+}
+
+/** What a bot message was about, so a tapback on it knows what to act on. */
+export interface MessageRef {
+  kind: "homework" | "reminder" | "internships" | "events" | "application" | "chat" | "text";
+  assignments?: string[]; // assignment keys
+  events?: string[]; // HeelLife event ids
+  jobs?: string[]; // Simplify listing ids
+  appIds?: string[];
+  reminderId?: string;
+  /** The bubble's text (for ❓ "explain this"). */
+  text?: string;
+}
+
+export interface Reminder {
+  id: string;
+  text: string;
+  at: number;
+  createdAt: number;
+  sentAt?: number;
+  done?: boolean;
+}
+
+export type AppStatus = "saved" | "applied" | "interviewing" | "offer" | "rejected" | "closed";
+
+/** What the TinyFish Agent found on a real application form (nothing filled in or submitted). */
+export interface PrepResult {
+  accepting_applications: boolean | null;
+  requires_account: boolean;
+  documents_required: string[];
+  questions: Array<{ question: string; required: boolean; kind: string }>;
+  deadline: string;
+  notes: string;
+  checkedAt: number;
+  runId: string;
+}
+
+export interface Application {
+  id: string;
+  company: string;
+  title: string;
+  url: string;
+  status: AppStatus;
+  savedAt: number;
+  statusAt: number;
+  appliedAt?: number;
+  prep?: PrepResult;
+  lastCheckedAt?: number;
 }
 
 export interface EventPrefs {
@@ -81,6 +131,11 @@ export interface UserState {
   internshipsSince?: number;
   sentKeys: string[]; // dedupe keys for proactive texts
   lastBriefDay?: string;
+  lastWeeklyDay?: string;
+  applications: Application[];
+  reminders: Reminder[];
+  /** Outbound message id → what it was about (last ~150). */
+  messageRefs: Record<string, MessageRef>;
 }
 
 interface State {
@@ -93,8 +148,9 @@ let state: State = load();
 function load(): State {
   try {
     const loaded = JSON.parse(readFileSync(STATE_PATH, "utf8")) as State;
-    // Older versions could save the same course site twice; keep the first of each URL.
     for (const user of Object.values(loaded.users)) {
+      withDefaults(user);
+      // Older versions could save the same course site twice; keep the first of each URL.
       for (const course of user.courses) {
         course.sites = course.sites.filter((s, i, all) => all.findIndex((o) => o.url === s.url) === i);
       }
@@ -124,6 +180,7 @@ export function newUser(id: string): UserState {
       remoteOk: true,
       needsSponsorship: false,
       alerts: true,
+      excludeCompanies: [],
     },
     events: { keywords: [], freeFood: false, eveningsOnly: false },
     schedule: { briefHour: 8, quietStart: 23, quietEnd: 8 },
@@ -132,7 +189,29 @@ export function newUser(id: string): UserState {
     doneAssignments: [],
     seenInternshipIds: [],
     sentKeys: [],
+    applications: [],
+    reminders: [],
+    messageRefs: {},
   };
+}
+
+/** Fill fields added in later versions so older saved state keeps working. */
+function withDefaults(user: UserState): void {
+  user.applications ??= [];
+  user.reminders ??= [];
+  user.messageRefs ??= {};
+  user.internships.excludeCompanies ??= [];
+}
+
+/** Remember what an outbound message was about (for tapbacks). */
+export function recordRef(user: UserState, messageId: string, ref: MessageRef): void {
+  user.messageRefs[messageId] = ref;
+  const ids = Object.keys(user.messageRefs);
+  for (const id of ids.slice(0, Math.max(0, ids.length - 150))) delete user.messageRefs[id];
+}
+
+export function shortId(): string {
+  return Math.random().toString(36).slice(2, 8);
 }
 
 export function getUser(id: string): UserState {
