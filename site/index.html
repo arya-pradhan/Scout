@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scout · study copilot over iMessage</title>
+<meta name="description" content="Scout is an AI assistant any college student can text on iMessage: homework from Canvas and professor sites, campus events, and jobs in your field. Built with Photon Spectrum and TinyFish.">
+<meta property="og:title" content="Scout 🧭: the study copilot that lives in your texts">
+<meta property="og:description" content="Homework, campus events and jobs in your field, over iMessage. Built with Photon Spectrum + TinyFish.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧭</text></svg>">
+<style>
+:root {
+  --bg: #fbfaf8;
+  --surface: #ffffff;
+  --surface-2: #f3f1ee;
+  --text: #16181d;
+  --muted: #5d6470;
+  --line: #e4e1dc;
+  --accent: #0f766e;
+  --accent-soft: #d8f0ec;
+  --accent-text: #0b5c56;
+  --bubble-in: #e9e9eb;
+  --bubble-in-text: #111;
+  --bubble-out: #0a84ff;
+  --bubble-out-text: #fff;
+  --phone: #16181d;
+  --shadow: 0 1px 2px rgba(20, 20, 30, .06), 0 12px 32px rgba(20, 20, 30, .08);
+  --radius: 18px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d0e10; --surface: #16181c; --surface-2: #1d2025; --text: #eef0f3; --muted: #a0a7b3;
+    --line: #2a2e35; --accent: #2dd4bf; --accent-soft: #10302d; --accent-text: #5eead4;
+    --bubble-in: #26282c; --bubble-in-text: #f2f2f4; --phone: #000; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 32px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d0e10; --surface: #16181c; --surface-2: #1d2025; --text: #eef0f3; --muted: #a0a7b3;
+  --line: #2a2e35; --accent: #2dd4bf; --accent-soft: #10302d; --accent-text: #5eead4;
+  --bubble-in: #26282c; --bubble-in-text: #f2f2f4; --phone: #000; --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 32px rgba(0,0,0,.35);
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  overflow-x: hidden;
+}
+a { color: var(--accent-text); }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+header.nav { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+.nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 56px; gap: 12px; }
+.brand { font-weight: 700; font-size: 18px; text-decoration: none; color: var(--text); white-space: nowrap; }
+.nav nav { display: flex; gap: 18px; font-size: 14px; }
+.nav nav a { color: var(--muted); text-decoration: none; }
+.nav nav a:hover { color: var(--text); }
+@media (max-width: 560px) { .nav nav a.hide-sm { display: none; } }
+
+.hero { padding: 56px 0 32px; display: grid; gap: 40px; align-items: center; }
+@media (min-width: 900px) { .hero { grid-template-columns: 1.1fr .9fr; padding: 80px 0 56px; } }
+.eyebrow { display: inline-block; font-size: 13px; font-weight: 600; color: var(--accent-text); background: var(--accent-soft); padding: 4px 10px; border-radius: 999px; }
+h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.05; letter-spacing: -.02em; margin: 16px 0 16px; }
+.lede { font-size: clamp(17px, 2.2vw, 19px); color: var(--muted); max-width: 36em; margin: 0 0 24px; }
+.ctas { display: flex; flex-wrap: wrap; gap: 12px; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 18px; border-radius: 12px; font-weight: 600; text-decoration: none; font-size: 15px; }
+.btn.primary { background: var(--accent); color: #fff; }
+:root[data-theme="dark"] .btn.primary { color: #042f2c; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .btn.primary { color: #042f2c; } }
+.btn.ghost { border: 1px solid var(--line); color: var(--text); background: var(--surface); }
+.stack { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; font-size: 13px; color: var(--muted); }
+.stack span { border: 1px solid var(--line); background: var(--surface); padding: 4px 10px; border-radius: 999px; }
+
+/* Phone + iMessage bubbles */
+.phone { width: min(360px, 100%); margin: 0 auto; background: var(--phone); border-radius: 44px; padding: 12px; box-shadow: var(--shadow); }
+.screen { background: var(--surface); border-radius: 34px; overflow: hidden; }
+.screen-top { text-align: center; padding: 14px 0 10px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.screen-top b { display: block; font-size: 14px; color: var(--text); }
+.avatar { width: 38px; height: 38px; margin: 0 auto 4px; border-radius: 50%; display: grid; place-items: center; font-size: 20px; background: var(--accent-soft); }
+.chat { padding: 12px 10px 16px; display: flex; flex-direction: column; gap: 6px; font-size: 14.5px; line-height: 1.38; }
+.chat.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 12px; }
+.b { max-width: 84%; padding: 8px 12px; border-radius: 18px; overflow-wrap: anywhere; white-space: pre-line; position: relative; }
+.b.in { align-self: flex-start; background: var(--bubble-in); color: var(--bubble-in-text); border-bottom-left-radius: 6px; }
+.b.out { align-self: flex-end; background: var(--bubble-out); color: var(--bubble-out-text); border-bottom-right-radius: 6px; }
+.b a { color: inherit; }
+.b.in a { color: var(--bubble-out); }
+.b .link { color: var(--bubble-out); font-size: 13px; }
+.tap { position: absolute; top: -12px; right: -8px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 1px 6px; font-size: 13px; box-shadow: var(--shadow); }
+.note { align-self: center; font-size: 11.5px; color: var(--muted); margin: 4px 0; }
+.typing { align-self: flex-start; background: var(--bubble-in); border-radius: 18px; padding: 10px 14px; display: flex; gap: 4px; }
+.typing i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); opacity: .6; animation: blink 1.2s infinite; }
+.typing i:nth-child(2) { animation-delay: .2s; } .typing i:nth-child(3) { animation-delay: .4s; }
+@keyframes blink { 0%, 80%, 100% { opacity: .25; } 40% { opacity: .9; } }
+@media (prefers-reduced-motion: reduce) { .typing i { animation: none; } html { scroll-behavior: auto; } }
+
+section { padding: 56px 0; }
+section.alt { background: var(--surface-2); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+h2 { font-size: clamp(26px, 4vw, 36px); letter-spacing: -.015em; line-height: 1.15; margin: 0 0 10px; }
+.sub { color: var(--muted); margin: 0 0 32px; max-width: 42em; }
+
+.video { aspect-ratio: 16 / 9; width: 100%; max-width: 860px; margin: 0 auto; border-radius: var(--radius); border: 1px dashed var(--line); background: var(--surface); display: grid; place-items: center; text-align: center; color: var(--muted); padding: 16px; }
+.video iframe, .video video { width: 100%; height: 100%; border: 0; border-radius: var(--radius); }
+
+.day { display: grid; gap: 22px; }
+@media (min-width: 760px) { .day { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 1040px) { .day { grid-template-columns: repeat(3, 1fr); } }
+.moment h3 { font-size: 15px; margin: 0 0 10px; display: flex; align-items: baseline; gap: 10px; }
+.moment h3 .time { font-variant-numeric: tabular-nums; color: var(--accent-text); font-weight: 700; white-space: nowrap; }
+.moment p.cap { font-size: 13.5px; color: var(--muted); margin: 10px 2px 0; }
+.tf { font-size: 11px; font-weight: 700; letter-spacing: .02em; color: var(--accent-text); background: var(--accent-soft); border-radius: 6px; padding: 2px 6px; white-space: nowrap; }
+
+.cols { display: grid; gap: 16px; }
+@media (min-width: 820px) { .cols { grid-template-columns: repeat(3, 1fr); } }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; }
+.card h3 { margin: 0 0 6px; font-size: 18px; }
+.card .role { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
+.card ul { margin: 0; padding-left: 18px; color: var(--text); font-size: 14.5px; }
+.card li { margin: 6px 0; }
+
+.flow { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; margin: 0 0 32px; font-size: 14px; }
+.flow .node { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; font-weight: 600; }
+.flow .node.hl { border-color: var(--accent); color: var(--accent-text); }
+.flow .arrow { color: var(--muted); }
+
+.eps { display: grid; gap: 14px; }
+@media (min-width: 820px) { .eps { grid-template-columns: repeat(3, 1fr); } }
+.ep h4 { margin: 0 0 4px; font-size: 16px; }
+.ep .why { font-size: 13.5px; color: var(--muted); margin: 10px 0 0; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 10px; }
+.chip { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; font-size: 14.5px; flex: 1 1 220px; }
+.chip b { font-size: 20px; margin-right: 6px; }
+
+.trust { display: grid; gap: 12px; }
+@media (min-width: 760px) { .trust { grid-template-columns: repeat(2, 1fr); } }
+.trust .card { padding: 16px 18px; }
+.trust h4 { margin: 0 0 4px; font-size: 15.5px; }
+.trust p { margin: 0; color: var(--muted); font-size: 14.5px; }
+
+footer { padding: 40px 0 56px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between; }
+code { font-size: .92em; background: var(--surface-2); padding: 1px 5px; border-radius: 6px; }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="#">🧭 Scout</a>
+    <nav>
+      <a href="#demo">Demo</a>
+      <a href="#day" class="hide-sm">A day with Scout</a>
+      <a href="#how">How it works</a>
+      <a href="https://github.com/arya-pradhan/tiny-fish-iMessage-Assistant">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap hero">
+    <div>
+      <span class="eyebrow">TinyFish × Photon · iMessage agent</span>
+      <h1>The study copilot that lives in your texts.</h1>
+      <p class="lede">Scout keeps track of your homework (from Canvas <em>and</em> your professors' own websites), finds campus events you'd actually go to, and watches for jobs and internships in your field. It texts you first when something matters, and stays quiet when nothing does. Works at any school.</p>
+      <div class="ctas">
+        <a class="btn primary" href="#demo">▶ Watch the 60s demo</a>
+        <a class="btn ghost" href="https://github.com/arya-pradhan/tiny-fish-iMessage-Assistant">View the code</a>
+      </div>
+      <div class="stack" aria-label="Built with">
+        <span>Photon Spectrum (iMessage)</span><span>TinyFish Search · Fetch · Agent</span><span>Claude Sonnet 5.5</span><span>TypeScript</span>
+      </div>
+    </div>
+
+    <div class="phone" role="img" aria-label="Example: Scout's morning brief in iMessage">
+      <div class="screen">
+        <div class="screen-top"><div class="avatar">🧭</div><b>Scout</b>iMessage · 8:00 AM</div>
+        <div class="chat">
+          <div class="b in">☀️ Morning, Maya! Here's your day 👇</div>
+          <div class="b in">📚 Due in the next 48h
+• PSYC 210: ethics assignment (Fri, 11:59 PM)
+<span class="link">example.edu/psyc210/calendar</span></div>
+          <div class="b in">🎉 On campus today
+• Build Your CV (4:00 PM, Dickinson Hall) 🍕
+<span class="link">gatorconnect.ufl.edu/event/…</span><span class="tap">❤️</span></div>
+          <div class="b in">💼 New postings for you
+• UL Solutions: 2027 Summer Marketing Intern (Chicago)
+<span class="link">linkedin.com/jobs/view/…</span></div>
+          <div class="b out">anything with free food tonight?</div>
+          <div class="typing" aria-hidden="true"><i></i><i></i><i></i></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <section id="demo" class="alt">
+    <div class="wrap">
+      <h2>See it in 60 seconds</h2>
+      <p class="sub">A real iMessage conversation: the moment, the web work TinyFish does, and the payoff back in the chat.</p>
+      <div class="video">
+        <!-- Replace this div's contents with your demo, e.g.
+             <iframe src="https://www.youtube.com/embed/VIDEO_ID" title="Scout demo" allowfullscreen></iframe>
+             or <video src="demo.mp4" controls playsinline></video> -->
+        <div>🎬 Demo video coming soon<br><small>Posted on X and LinkedIn with @Tiny_Fish and @photon_hq</small></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="day">
+    <div class="wrap">
+      <h2>A day with Scout</h2>
+      <p class="sub">Example conversations, adapted from real test runs. <span class="tf">TinyFish</span> tags mark where Scout is working on the live web.</p>
+      <div class="day">
+
+        <div class="moment">
+          <h3><span class="time">Setup</span> 3 minutes, over text</h3>
+          <div class="chat card">
+            <div class="b in">Where does University of Florida post events? Paste the link, say "find it", or say skip.</div>
+            <div class="b out">https://gatorconnect.ufl.edu/events</div>
+            <div class="b in">Connected ✅ I see 50+ events in the next 2 weeks, like "Build Your CV" (Wed, 4:00 PM).</div>
+            <div class="b in">What are you looking for? Any field works.</div>
+            <div class="b out">marketing internships in Chicago</div>
+            <div class="b in">Got it. I'll search the web for new postings twice a day and check a posting is really open before texting you ✅</div>
+          </div>
+          <p class="cap">School, Canvas feed, courses and their websites, events page, jobs, job boards, brief time. Resumable any time.</p>
+        </div>
+
+        <div class="moment">
+          <h3><span class="time">10:05 AM</span> Deadlines from the prof's own site <span class="tf">Fetch</span></h3>
+          <div class="chat card">
+            <div class="b out">what's due for COMP 523 this week?</div>
+            <div class="b in">Two things, both Fri, Oct 2 at 11:59 PM:
+• Architecture diagram
+• System metaphor
+From the course calendar:
+<span class="link">cs.unc.edu/~stotts/COMP523-F26/calendar.html</span></div>
+            <div class="b out">add the ethics one to my calendar</div>
+            <div class="b in">📅 Tap to add it to Google Calendar, then hit Save:
+DUE: COMP 523 ethics assignment (Fri, Oct 23)
+<span class="link">calendar.google.com/…</span></div>
+          </div>
+          <p class="cap">Scout crawled the home page, then the linked Calendar and Deliverables pages, and knew "EOW" means Friday.</p>
+        </div>
+
+        <div class="moment">
+          <h3><span class="time">11:40 AM</span> A posting drops <span class="tf">Search</span> <span class="tf">Agent</span></h3>
+          <div class="chat card">
+            <div class="b in">💼 New posting for you:
+• UL Solutions: 2027 Summer Intern: Marketing (Chicago)
+  ✅ open · checked live
+❤️ to save to your tracker · 👎 for fewer like this<span class="tap">❤️</span></div>
+            <div class="b in">💼 Saved UL Solutions to your tracker. Want me to open the application and see what it asks?</div>
+          </div>
+          <p class="cap">Found by a recent-results web search, then a TinyFish Agent opened the real posting to confirm it's still accepting applications.</p>
+        </div>
+
+        <div class="moment">
+          <h3><span class="time">3:15 PM</span> What does the application ask? <span class="tf">Agent</span></h3>
+          <div class="chat card">
+            <div class="b out">what does the Perchwell application ask for?</div>
+            <div class="b in">Opening the Perchwell application to see what it asks… (~1-2 min) 📝</div>
+            <div class="b in">Document: resume
+• Legally authorized to work in the US?
+• Comfortable in the SoHo office 5 days a week?
+• Describe a project you built on your own
+• What excites you about a company Perchwell's size?
+Deadline: Oct 18, 11:00 PM ET. No account needed.
+Want me to draft the two essay answers?</div>
+          </div>
+          <p class="cap">The Agent clicks through to the real form and reads it. It never types, signs in, or submits.</p>
+        </div>
+
+        <div class="moment">
+          <h3><span class="time">9:00 PM</span> Exactly when you asked</h3>
+          <div class="chat card">
+            <div class="note">earlier: "remind me at 9 to start the essay"</div>
+            <div class="b in">⏰ Reminder: start the Perchwell essay
+👍 when it's done, or say "snooze 1h".<span class="tap">👍</span></div>
+            <div class="b in">✅ Nice, checked off.</div>
+            <div class="b out">I applied to Perchwell!</div>
+            <div class="b in">Nice work! 🎉 Marked Perchwell as applied. I'll check in in two weeks.</div>
+          </div>
+          <p class="cap">Tapbacks are controls: 👍 done, ❤️ save or calendar, 👎 fewer like this, ❓ explain.</p>
+        </div>
+
+        <div class="moment">
+          <h3><span class="time">Sun 7 PM</span> The week ahead</h3>
+          <div class="chat card">
+            <div class="b in">🗓️ Sunday check-in, Maya! Here's what's coming up:</div>
+            <div class="b in">📚 This week
+Friday, Oct 23
+  • PSYC 210: ethics assignment (11:59 PM)</div>
+            <div class="b in">🎉 Worth a look this week
+• Career Center: Build Your CV (Wed 4 PM)</div>
+            <div class="b in">❤️ any bubble to get Google Calendar links for it.</div>
+          </div>
+          <p class="cap">Proactive texts are deduped, respect quiet hours, and skip entirely when there's nothing to say.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <section id="how" class="alt">
+    <div class="wrap">
+      <h2>How it works</h2>
+      <p class="sub">Photon carries the conversation, TinyFish does the web work, Claude decides what to do and writes the reply.</p>
+
+      <div class="flow" aria-label="Message flow">
+        <span class="node">📱 iMessage</span><span class="arrow">⇄</span>
+        <span class="node">Photon Spectrum</span><span class="arrow">⇄</span>
+        <span class="node">Scout + Claude (18 tools)</span><span class="arrow">→</span>
+        <span class="node hl">TinyFish Search · Fetch · Agent</span><span class="arrow">→</span>
+        <span class="node">the live web</span>
+      </div>
+
+      <div class="cols">
+        <div class="card">
+          <h3>Photon Spectrum</h3>
+          <p class="role">The iMessage layer</p>
+          <ul>
+            <li>A real iMessage number: every message in and out</li>
+            <li>Texts first: briefs, nudges, alerts, reminders</li>
+            <li>Tapback reactions as controls</li>
+            <li>Typing indicator, message effects (🎉 🎆), rich links, contact card</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>TinyFish</h3>
+          <p class="role">The web layer, with all three endpoints doing real work</p>
+          <ul>
+            <li>Search: discovers course sites, events pages, fresh postings</li>
+            <li>Fetch: crawls professor sites, events pages and job boards</li>
+            <li>Agent: verifies postings and reads application forms in a real browser</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Claude Sonnet 5.5</h3>
+          <p class="role">The brain</p>
+          <ul>
+            <li>Understands free-form texts and picks the right tools</li>
+            <li>Turns messy pages into dated deadlines and events</li>
+            <li>Only states facts that came back from a tool, with links</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3 style="margin:40px 0 14px">Every TinyFish endpoint, and why it's there</h3>
+      <div class="eps">
+        <div class="card ep">
+          <h4>🔎 Search</h4>
+          <div>"Find it" for a course's website or your school's events page · a job-search watch using recent results only · research answers with sources.</div>
+          <p class="why">Scout doesn't have a URL yet, or the postings live across the whole web.</p>
+        </div>
+        <div class="card ep">
+          <h4>📄 Fetch</h4>
+          <div>Crawls a professor's site: the page plus its linked Calendar / Deliverables / Syllabus pages and PDFs, batched · events pages at schools without an API · job boards.</div>
+          <p class="why">These pages are messy, JS-rendered or PDFs. Fetch returns clean text and links.</p>
+        </div>
+        <div class="card ep">
+          <h4>🤖 Agent</h4>
+          <div>Confirms a posting is still open before Scout texts you · reads real application forms (questions, documents, deadline) · browses JS-heavy course sites and boards.</div>
+          <p class="why">Some answers take clicking through a live site. Every goal is read-only.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>Works at any school</h2>
+      <p class="sub">Onboarding asks for links, and Scout figures out how to read them.</p>
+      <div class="chips">
+        <div class="chip"><b>🎓</b>Your school sets your timezone: every time Scout shows is local to you.</div>
+        <div class="chip"><b>📚</b>Canvas via your private read-only calendar feed. No password needed.</div>
+        <div class="chip"><b>🧑‍🏫</b>Any professor website: HTML, schedule tables, PDFs, "EOW" deadlines.</div>
+        <div class="chip"><b>🎉</b>Campus Labs Engage and Localist calendars, or any events page.</div>
+        <div class="chip"><b>💼</b>Any field: web-search watch, any job board, Greenhouse / Lever / Ashby careers pages, plus the Simplify list for tech.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="alt">
+    <div class="wrap">
+      <h2>Built to be trusted</h2>
+      <p class="sub">A friend who texts you useful things, not a bot that does things behind your back.</p>
+      <div class="trust">
+        <div class="card"><h4>Read-only on the web</h4><p>Agent goals forbid signing in, typing into forms, applying or submitting. Scout can't book, buy, RSVP or email anything.</p></div>
+        <div class="card"><h4>You approve every add</h4><p>Calendar links open pre-filled; you tap Save. Essay drafts only when you say yes.</p></div>
+        <div class="card"><h4>Never fakes a source</h4><p>Deadlines, events and postings come only from real pages, each with its link. Items without a real date are dropped.</p></div>
+        <div class="card"><h4>Quiet by default</h4><p>Deduped alerts, quiet hours, and no brief on days with nothing to say. Failures are named, not hidden.</p></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>🧭 Scout · built by <a href="https://github.com/arya-pradhan">Arya Pradhan</a> for the TinyFish × Photon iMessage bounty</div>
+    <div><a href="https://github.com/arya-pradhan/tiny-fish-iMessage-Assistant">GitHub</a> · <a href="https://www.tinyfish.ai">TinyFish</a> · <a href="https://photon.codes">Photon</a></div>
+  </div>
+</footer>
+
+</body>
+</html>
