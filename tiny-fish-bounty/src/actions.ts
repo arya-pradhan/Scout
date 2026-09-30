@@ -6,7 +6,7 @@ import { calendarReplies, deadlineItem, eventItem, type CalItem } from "./calend
 import { upcomingHomework } from "./homework.ts";
 import { say, type Reply } from "./reply.ts";
 import { getEventById } from "./sources/events.ts";
-import { getListing } from "./sources/internships.ts";
+import { getJobById } from "./sources/jobs.ts";
 import { save, type Application, type UserState } from "./store.ts";
 
 /** Mark assignments done. Adds a confetti bubble when that clears the whole week. */
@@ -31,7 +31,7 @@ export async function markDone(user: UserState, keys: string[]): Promise<{ marke
   return { marked, replies };
 }
 
-/** Build a calendar file from real data only: HeelLife events, homework, custom items the student gave. */
+/** Build calendar links from real data only: school events, homework, custom items the student gave. */
 export async function calendarFor(
   user: UserState,
   opts: { events?: string[]; assignments?: string[]; custom?: CalItem[] },
@@ -55,11 +55,11 @@ export async function calendarFor(
   return { replies: items.length ? calendarReplies(items) : [], added: items.map((i) => i.title), missing };
 }
 
-/** Save Simplify listings to the tracker. */
+/** Save postings (any source) to the tracker. */
 export async function saveJobs(user: UserState, jobIds: string[]): Promise<Application[]> {
   const saved: Application[] = [];
   for (const id of jobIds) {
-    const job = await getListing(id).catch(() => undefined);
+    const job = await getJobById(id).catch(() => undefined);
     if (job) saved.push(saveListing(user, job).app);
   }
   return saved;

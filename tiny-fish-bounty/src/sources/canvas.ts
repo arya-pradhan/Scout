@@ -38,6 +38,7 @@ async function fetchIcs(feedUrl: string): Promise<string> {
 export async function readCanvasFeed(feedUrl: string): Promise<Assignment[]> {
   const raw = await fetchIcs(feedUrl);
   const events = ical.sync.parseICS(raw);
+  const calendarPage = `https://${new URL(feedUrl).host}/calendar`;
   const out: Assignment[] = [];
   for (const ev of Object.values(events)) {
     if (!ev || ev.type !== "VEVENT" || !ev.start) continue;
@@ -52,7 +53,7 @@ export async function readCanvasFeed(feedUrl: string): Promise<Assignment[]> {
       course,
       title: summary.replace(/\s*\[[^\]]+\]\s*$/, "").trim(),
       due: new Date(ev.start).toISOString(),
-      url: url || "https://canvas.unc.edu/calendar",
+      url: url || calendarPage,
       source: "canvas",
     });
   }

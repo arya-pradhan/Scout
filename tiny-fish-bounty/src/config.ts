@@ -1,6 +1,8 @@
-// Runtime settings read from .env (see .env.example).
+﻿// Runtime settings read from .env (see .env.example).
 
-export const MODEL = process.env.CLAUDE_MODEL ?? "claude-haiku-4-5";
+import { AsyncLocalStorage } from "node:async_hooks";
+
+export const MODEL = process.env.CLAUDE_MODEL ?? "claude-sonnet-5-5";
 
 /**
  * Reading deadlines off messy course sites needs careful date reasoning ("EOW", times the
@@ -16,8 +18,38 @@ export const supportsFallbacks = (model: string) => /opus-5|sonnet-5-5|fable/.te
 export const MODEL_SUPPORTS_EFFORT = supportsEffort(MODEL);
 export const MODEL_SUPPORTS_FALLBACKS = supportsFallbacks(MODEL);
 
-/** Everything the bot says about dates is in this timezone. */
-export const TIMEZONE = process.env.TZ_NAME ?? "America/New_York";
+/** Fallback timezone when a student hasn't told us their school yet. */
+export const DEFAULT_TIMEZONE = process.env.TZ_NAME ?? "America/New_York";
+
+// Each student's school sets their timezone. It's scoped per message / scheduler pass
+// with AsyncLocalStorage, so every date helper below uses the right one without threading
+// the user through every call.
+const tzScope = new AsyncLocalStorage<string>();
+
+export function withTimezone<T>(timezone: string | undefined, fn: () => T): T {
+  return tzScope.run(timezone || DEFAULT_TIMEZONE, fn);
+}
+
+/** The current student's IANA timezone (e.g. "America/Los_Angeles"). */
+export function currentTimezone(): string {
+  return tzScope.getStore() ?? DEFAULT_TIMEZONE;
+}
+
+/** The current student's UTC offset right now, e.g. "-04:00" (for prompts that need to write ISO times). */
+export function utcOffset(d = new Date()): string {
+  const name = d.toLocaleString("en-US", { timeZone: currentTimezone(), timeZoneName: "longOffset" }).split(" ").pop() ?? "GMT";
+  const m = name.match(/GMT([+-]\d{2}:\d{2})/);
+  return m ? m[1]! : "+00:00";
+}
+
+export function isValidTimezone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** Phone numbers / Apple IDs the bot answers. Empty = answer anyone (not recommended). */
 export const ALLOWED_SENDERS = (process.env.ALLOWED_PHONES ?? "")
@@ -46,7 +78,7 @@ export function fmtDate(d: Date | string | number): string {
   const date = new Date(d);
   const otherYear = date.getFullYear() !== new Date().getFullYear();
   return date.toLocaleString("en-US", {
-    timeZone: TIMEZONE,
+    timeZone: currentTimezone(),
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -62,17 +94,17 @@ export function greeting(d = new Date()): string {
   return h < 12 ? "☀️ Morning" : h < 17 ? "👋 Afternoon" : "🌙 Evening";
 }
 
-/** Hour of day (0-23) in the bot's timezone. */
+/** Hour of day (0-23) in the student's timezone. */
 export function localHour(d = new Date()): number {
-  return Number(d.toLocaleString("en-US", { timeZone: TIMEZONE, hour: "numeric", hourCycle: "h23" }));
+  return Number(d.toLocaleString("en-US", { timeZone: currentTimezone(), hour: "numeric", hourCycle: "h23" }));
 }
 
-/** "Sunday", "Monday", … in the bot's timezone. */
+/** "Sunday", "Monday", … in the student's timezone. */
 export function localWeekday(d = new Date()): string {
-  return d.toLocaleDateString("en-US", { timeZone: TIMEZONE, weekday: "long" });
+  return d.toLocaleDateString("en-US", { timeZone: currentTimezone(), weekday: "long" });
 }
 
-/** YYYY-MM-DD in the bot's timezone. */
+/** YYYY-MM-DD in the student's timezone. */
 export function localDay(d = new Date()): string {
-  return d.toLocaleDateString("en-CA", { timeZone: TIMEZONE });
+  return d.toLocaleDateString("en-CA", { timeZone: currentTimezone() });
 }

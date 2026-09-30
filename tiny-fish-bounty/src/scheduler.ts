@@ -1,21 +1,25 @@
 // Proactive texts: the morning brief, due-date nudges, "new assignment posted" alerts,
-// verified internship drops, application follow-ups, the Sunday week-ahead plan, and
+// verified new job/internship postings, application follow-ups, the Sunday week-ahead plan, and
 // reminders the student asked for. Everything is deduped; nothing but explicitly
 // requested reminders is sent during quiet hours. Each bubble carries a `ref` so a
 // tapback on it can act.
 
 import { prepApplication } from "./applications.ts";
 import { buildBrief, buildWeekAhead, repliesText } from "./brief.ts";
-import { INTERNSHIP_CHECK_MS, SCHEDULER_TICK_MS, SITE_CHECK_MS, fmtDate, localDay, localHour, localWeekday } from "./config.ts";
+import { INTERNSHIP_CHECK_MS, SCHEDULER_TICK_MS, SITE_CHECK_MS, fmtDate, localDay, localHour, localWeekday, withTimezone } from "./config.ts";
 import { upcomingHomework } from "./homework.ts";
 import { say, type Reply } from "./reply.ts";
 import { readCourseSite } from "./sources/courseSites.ts";
-import { loadListings, matchesPrefs, verifyPosting, type Internship } from "./sources/internships.ts";
+import { checkBoard } from "./sources/jobBoards.ts";
+import { loadListings, matchesPrefs, verifyPosting, type Job } from "./sources/jobs.ts";
+import { searchJobs } from "./sources/jobSearch.ts";
 import { allUsers, internshipCache, markSent, pushHistory, save, type UserState } from "./store.ts";
 
 export type ProactiveSend = (user: UserState, replies: Reply[]) => Promise<void>;
 
 const DAY = 24 * 3600_000;
+/** Job boards and the search watch are checked twice a day (Agent-mode boards once a day). */
+const BOARD_CHECK_MS = Number(process.env.BOARD_CHECK_MS ?? 12 * 3600_000);
 
 export function isQuiet(user: UserState, hour = localHour()): boolean {
   const { quietStart: s, quietEnd: e } = user.schedule;
@@ -83,7 +87,7 @@ async function courseSiteChanges(user: UserState, send: ProactiveSend): Promise<
           const text =
             `📌 New on the ${course.code} site:\n` +
             fresh.map((a) => `• ${a.title}, due ${fmtDate(a.due)}\n  ${a.url}`).join("\n") +
-            "\n\n❤️ to add to your calendar.";
+            "\n\n❤️ to add to Google Calendar.";
           await deliver(send, user, [say(text, { kind: "homework", assignments: fresh.map((a) => a.key), text })]);
         }
       } catch (err) {
@@ -102,12 +106,45 @@ async function courseSiteChanges(user: UserState, send: ProactiveSend): Promise<
   }
 }
 
-async function internshipDrops(user: UserState, listings: Internship[], send: ProactiveSend): Promise<void> {
-  if (!user.internships.alerts || !user.internshipsSince) return;
-  const since = Math.max(user.internshipsSince, Date.now() - 3 * DAY);
-  const matches = listings.filter(
-    (j) => new Date(j.postedAt).getTime() > since && !user.seenInternshipIds.includes(j.id) && matchesPrefs(j, user.internships),
-  );
+/** New postings from the student's sources: Simplify (tech), their job boards, their search watch. */
+async function newPostings(user: UserState, simplify: Job[] | null): Promise<Job[]> {
+  const prefs = user.internships;
+  const candidates: Job[] = [];
+  if (prefs.simplify && simplify && user.internshipsSince) {
+    const since = Math.max(user.internshipsSince, Date.now() - 3 * DAY);
+    candidates.push(...simplify.filter((j) => new Date(j.postedAt).getTime() > since));
+  }
+  for (const board of prefs.boards) {
+    const every = board.mode === "agent" ? DAY : BOARD_CHECK_MS;
+    if (Date.now() - (board.lastChecked ?? 0) < every) continue;
+    board.lastChecked = Date.now();
+    try {
+      const jobs = await checkBoard(board);
+      candidates.push(...jobs.filter((j) => !board.knownIds.includes(j.id)));
+      board.knownIds = [...new Set([...board.knownIds, ...jobs.map((j) => j.id)])].slice(-500);
+      board.failures = 0;
+    } catch (err) {
+      board.failures++;
+      console.warn(`[scheduler] job board ${board.url}:`, (err as Error).message);
+    }
+    save();
+  }
+  if (prefs.searchQuery && Date.now() - (prefs.searchLastChecked ?? 0) > BOARD_CHECK_MS) {
+    prefs.searchLastChecked = Date.now();
+    save();
+    candidates.push(...(await searchJobs(prefs.searchQuery, true).catch(() => [])));
+  }
+  return candidates;
+}
+
+async function jobDrops(user: UserState, simplify: Job[] | null, send: ProactiveSend): Promise<void> {
+  if (!user.internships.alerts) return;
+  const seen = new Set<string>();
+  const matches = (await newPostings(user, simplify)).filter((j) => {
+    if (seen.has(j.id) || user.seenInternshipIds.includes(j.id) || !matchesPrefs(j, user.internships)) return false;
+    seen.add(j.id);
+    return true;
+  });
   if (!matches.length) return;
   user.seenInternshipIds.push(...matches.map((j) => j.id));
   save();
@@ -115,7 +152,7 @@ async function internshipDrops(user: UserState, listings: Internship[], send: Pr
   // Verify the top 2 on the live site with TinyFish Agent before texting.
   const top = matches.slice(0, 2);
   const checks = await Promise.allSettled(top.map((j) => verifyPosting(j.url)));
-  const shown: Internship[] = [];
+  const shown: Job[] = [];
   const lines: string[] = [];
   top.forEach((j, i) => {
     const c = checks[i]!;
@@ -127,11 +164,12 @@ async function internshipDrops(user: UserState, listings: Internship[], send: Pr
             .join(" · ")
         : "couldn't open the posting to double-check";
     shown.push(j);
-    lines.push(`• ${j.company}: ${j.title} (${j.locations.slice(0, 2).join(", ")})\n  ${detail}\n  ${j.url}`);
+    const where = j.locations.length ? ` (${j.locations.slice(0, 2).join(", ")})` : "";
+    lines.push(`• ${j.company}: ${j.title}${where}\n  ${detail}\n  ${j.url}`);
   });
   if (!shown.length) return;
   const more = matches.length > top.length ? `+${matches.length - top.length} more matches. Want the list?\n` : "";
-  const text = `💼 New internship${shown.length > 1 ? "s" : ""} for you:\n${lines.join("\n")}\n\n${more}❤️ to save to your tracker · 👎 for fewer like this`;
+  const text = `💼 New posting${shown.length > 1 ? "s" : ""} for you:\n${lines.join("\n")}\n\n${more}❤️ to save to your tracker · 👎 for fewer like this`;
   await deliver(send, user, [say(text, { kind: "internships", jobs: shown.map((j) => j.id), text })]);
 }
 
@@ -203,27 +241,30 @@ export async function tick(send: ProactiveSend, users?: UserState[]): Promise<vo
   try {
     const targets = users ?? allUsers().filter((u) => u.onboarding.step === "done" && u.spaceId);
     const meta = internshipCache();
-    let listings: Internship[] | null = null;
-    if ((users || Date.now() - (meta.lastCheck ?? 0) > INTERNSHIP_CHECK_MS) && targets.some((u) => u.internships.alerts)) {
+    let simplify: Job[] | null = null;
+    if ((users || Date.now() - (meta.lastCheck ?? 0) > INTERNSHIP_CHECK_MS) && targets.some((u) => u.internships.alerts && u.internships.simplify)) {
       meta.lastCheck = Date.now();
-      listings = await loadListings().catch((err) => {
-        console.warn("[scheduler] internship list:", (err as Error).message);
+      simplify = await loadListings().catch((err) => {
+        console.warn("[scheduler] Simplify list:", (err as Error).message);
         return null;
       });
     }
     for (const user of targets) {
-      if (isQuiet(user)) continue;
-      const jobs: Array<[string, () => Promise<void>]> = [
-        ["brief", () => morningBrief(user, send)],
-        ["week", () => weekAhead(user, send)],
-        ["nudges", () => dueNudges(user, send)],
-        ["sites", () => courseSiteChanges(user, send)],
-        ["applications", () => applicationFollowUps(user, send)],
-      ];
-      if (listings) jobs.push(["internships", () => internshipDrops(user, listings!, send)]);
-      for (const [name, job] of jobs) {
-        await job().catch((err) => console.warn(`[scheduler] ${name} for ${user.id}:`, err));
-      }
+      // Every date, quiet hour and brief time below is in this student's timezone.
+      await withTimezone(user.school?.timezone, async () => {
+        if (isQuiet(user)) return;
+        const jobs: Array<[string, () => Promise<void>]> = [
+          ["brief", () => morningBrief(user, send)],
+          ["week", () => weekAhead(user, send)],
+          ["nudges", () => dueNudges(user, send)],
+          ["sites", () => courseSiteChanges(user, send)],
+          ["applications", () => applicationFollowUps(user, send)],
+          ["jobs", () => jobDrops(user, simplify, send)],
+        ];
+        for (const [name, job] of jobs) {
+          await job().catch((err) => console.warn(`[scheduler] ${name} for ${user.id}:`, err));
+        }
+      });
     }
   } finally {
     running = false;

@@ -1,15 +1,15 @@
 // Tapbacks as controls. A reaction on one of the bot's bubbles acts on what that bubble
 // was about (its MessageRef):
 //   👍 homework → mark done · 👍 reminder → complete · 👍/❤️ internships → save to tracker
-//   ❤️ events or homework → calendar file (student still taps Add) · 👎 internships → mute company
+//   ❤️ events or homework → Google Calendar links (student still taps Save) · 👎 internships → mute company
 //   ❓ anything → explain in more detail
 // Anything else stays quiet.
 
 import { calendarFor, markDone, saveJobs } from "./actions.ts";
 import { chat } from "./agent.ts";
-import { getListing } from "./sources/internships.ts";
+import { getJobById } from "./sources/jobs.ts";
 import { say, type Send } from "./reply.ts";
-import { pushHistory, save, type MessageRef, type UserState } from "./store.ts";
+import { save, type MessageRef, type UserState } from "./store.ts";
 
 export type Tapback = "love" | "like" | "dislike" | "question" | "emphasize" | "laugh" | "other";
 
@@ -41,8 +41,6 @@ export async function handleReaction(
     const answer = await chat(user, `Explain your earlier message in a bit more detail, and say what I can do about it:\n"${about.slice(0, 1500)}"`, (t) =>
       send([say(t)]),
     );
-    pushHistory(user, "assistant", answer.text);
-    save();
     await send([say(answer.text, answer.ref), ...answer.extras]);
     return;
   }
@@ -70,13 +68,13 @@ export async function handleReaction(
   // ❤️ on internships (or 👍 on an internship alert) → save to the tracker.
   if (((kind === "like" && ref.kind === "internships") || kind === "love") && ref.jobs?.length) {
     const saved = await saveJobs(user, ref.jobs);
-    if (!saved.length) return send([say("Hmm, those listings aren't on the Simplify list anymore, so I couldn't save them.")]);
+    if (!saved.length) return send([say("Hmm, I couldn't find those postings anymore, so I couldn't save them. They may have been taken down.")]);
     const names = saved.map((a) => a.company).join(", ");
     await send([say(`💼 Saved ${names} to your tracker. Want me to open the application and see what it asks? (say "prep ${saved[0]!.company}")`)]);
     return;
   }
 
-  // ❤️ on events or homework → calendar file.
+  // ❤️ on events or homework → Google Calendar links.
   if (kind === "love" && (ref.events?.length || ref.assignments?.length)) {
     const { replies, missing } = await calendarFor(user, { events: ref.events, assignments: ref.assignments });
     if (!replies.length) return send([say("Those already passed or were marked done, so there's nothing to add.")]);
@@ -88,7 +86,7 @@ export async function handleReaction(
   if (kind === "dislike" && ref.jobs?.length) {
     const companies = new Set<string>();
     for (const id of ref.jobs) {
-      const job = await getListing(id).catch(() => undefined);
+      const job = await getJobById(id).catch(() => undefined);
       if (job) companies.add(job.company);
     }
     if (!companies.size) return;

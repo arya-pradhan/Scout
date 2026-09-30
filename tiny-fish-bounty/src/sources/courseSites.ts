@@ -9,7 +9,7 @@
 
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { localDay, SITE_MODEL, TIMEZONE } from "../config.ts";
+import { currentTimezone, localDay, SITE_MODEL, utcOffset } from "../config.ts";
 import { extract } from "../llm.ts";
 import { fetchPage, fetchPages, runAgent, search, type FetchedPage, type SearchResult } from "../tinyfish.ts";
 import type { Course } from "../store.ts";
@@ -96,13 +96,13 @@ export async function readCourseSite(url: string, course: string, extraPages: st
 
   const result = await extract(
     ExtractedSchema,
-    `You extract deadlines from a university course website for ${course}. Today is ${localDay()} (timezone ${TIMEZONE}).
+    `You extract deadlines from a university course website for ${course}. Today is ${localDay()} (the school's timezone is ${currentTimezone()}, currently UTC${utcOffset()}).
 The input is several pages from the same site, each starting with "=== PAGE: <url>".
 Include every assignment, project deliverable, quiz and exam that has a date on the pages.
 Dates written without a year belong to the semester shown on the site (e.g. "Fall 2026"). Never invent a date for an item that has none.
 Schedules are often a table of class days with items listed under each day. An item marked "EOW" (end of week) is due Friday of that same week at 23:59 local time, not on the class day it's listed under.
-Times written in the page text (e.g. "Sept 30, 6pm") are US Eastern: use the -04:00/-05:00 offset.
-Exception: the pages were loaded by a browser set to UTC, so a due time the page's JavaScript displayed as an odd hour like 3:59 AM or 4:59 AM is really 11:59 PM Eastern the day before. Output only those with a Z offset exactly as shown (e.g. 2026-09-30T03:59:00Z).
+Times written in the page text (e.g. "Sept 30, 6pm") are in the school's timezone: use its offset (${utcOffset()}, adjusted if daylight saving changes by then).
+Exception: the pages were loaded by a browser set to UTC, so a due time the page's JavaScript displayed at an odd early-morning hour (e.g. 3:59 AM or 6:59 AM, i.e. 11:59 PM local converted to UTC) is really the previous evening locally. Output only those with a Z offset exactly as shown (e.g. 2026-09-30T03:59:00Z).
 If a site also lists a past semester (e.g. last spring's schedule below this fall's), include only the current semester's items.
 Include past items from this semester too; the caller filters by date. Resolve relative links against the page they appear on.`,
     text,
@@ -217,7 +217,7 @@ export function upsertSite(course: Course, url: string, read: SiteReadResult & {
 }
 
 /** "find it": search the web for a course's own site (outside Canvas). */
-export async function findCourseSite(course: string, school = "UNC Chapel Hill"): Promise<SearchResult[]> {
+export async function findCourseSite(course: string, school: string): Promise<SearchResult[]> {
   const year = new Date().getFullYear();
   const results = await search(`${school} ${course} ${year} course website schedule assignments`, {
     purpose: `Find the public course website or schedule page for ${course} at ${school}, not Canvas`,

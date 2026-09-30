@@ -10,7 +10,7 @@ export type Reply =
   | { text: string; ref?: MessageRef; effect?: Effect }
   | { link: string }
   | { contactCard: true }
-  /** An attachment, e.g. a .ics the student taps to add to Apple Calendar. */
+  /** An attachment (currently unused: .ics files open read-only in iMessage, so calendar adds use Google links). */
   | { file: { name: string; mimeType: string; data: Buffer } };
 
 export type Send = (replies: Reply[]) => Promise<void>;

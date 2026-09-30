@@ -1,14 +1,14 @@
 // The morning brief and the Sunday week-ahead plan: built deterministically from real
 // data (no LLM), so every line is traceable to a source link. Each section is its own
 // bubble with a `ref`, so a tapback acts on exactly that section (👍 homework = done,
-// ❤️ events = add to calendar, ❤️ internships = save). Returns null when there's nothing
+// ❤️ events = add to calendar, ❤️ postings = save). Returns null when there's nothing
 // worth a text.
 
-import { fmtDate, greeting, localWeekday, TIMEZONE } from "./config.ts";
+import { currentTimezone, fmtDate, greeting, localHour, localWeekday } from "./config.ts";
 import { upcomingHomework } from "./homework.ts";
 import { say, type Reply } from "./reply.ts";
-import { getEvents } from "./sources/events.ts";
-import { loadListings, matchesPrefs } from "./sources/internships.ts";
+import { eventSourceLabel, getEvents } from "./sources/events.ts";
+import { collectJobs, matchesPrefs } from "./sources/jobs.ts";
 import type { UserState } from "./store.ts";
 
 export async function buildBrief(user: UserState, opts: { greeting?: boolean } = {}): Promise<Reply[] | null> {
@@ -17,7 +17,7 @@ export async function buildBrief(user: UserState, opts: { greeting?: boolean } =
 
   const [hw, events, jobs] = await Promise.allSettled([
     upcomingHomework(user, 2),
-    getEvents({
+    getEvents(user, {
       from: new Date(),
       to: endOfToday(),
       keywords: user.events.keywords,
@@ -26,7 +26,7 @@ export async function buildBrief(user: UserState, opts: { greeting?: boolean } =
       eveningsOnly: user.events.eveningsOnly,
       limit: 3,
     }),
-    user.internships.alerts ? loadListings() : Promise.resolve([]),
+    user.internships.alerts ? collectJobs(user) : Promise.resolve({ jobs: [], failed: [] }),
   ]);
 
   if (hw.status === "fulfilled") {
@@ -47,18 +47,21 @@ export async function buildBrief(user: UserState, opts: { greeting?: boolean } =
           .join("\n");
       bubbles.push(say(text, { kind: "events", events: events.value.map((e) => e.id), text }));
     }
-  } else notes.push("HeelLife wasn't responding");
+  } else notes.push(`${eventSourceLabel(user)} wasn't responding`);
 
   if (jobs.status === "fulfilled") {
     const since = Date.now() - 24 * 3600_000;
-    const fresh = jobs.value.filter((j) => new Date(j.postedAt).getTime() > since && matchesPrefs(j, user.internships)).slice(0, 3);
+    const fresh = jobs.value.jobs.filter((j) => new Date(j.postedAt).getTime() > since && matchesPrefs(j, user.internships)).slice(0, 3);
     if (fresh.length) {
       const text =
-        "💼 New internships (last 24h)\n" +
-        fresh.map((j) => `• ${j.company}: ${j.title} (${j.locations.slice(0, 2).join(", ")})\n  ${j.url}`).join("\n");
+        "💼 New postings for you (last 24h)\n" +
+        fresh
+          .map((j) => `• ${j.company}: ${j.title}${j.locations.length ? ` (${j.locations.slice(0, 2).join(", ")})` : ""}\n  ${j.url}`)
+          .join("\n");
       bubbles.push(say(text, { kind: "internships", jobs: fresh.map((j) => j.id), text }));
     }
-  } else notes.push("the internship list wasn't loading");
+    if (jobs.value.failed.length) notes.push(`couldn't check ${jobs.value.failed.join(", ")}`);
+  } else notes.push("job sources weren't loading");
 
   if (!bubbles.length && !opts.greeting) return null;
   const hello = `${greeting()}${user.name ? `, ${user.name}` : ""}!`;
@@ -74,8 +77,9 @@ export async function buildWeekAhead(user: UserState): Promise<Reply[] | null> {
   if (hw?.items.length) {
     const byDay = new Map<string, string[]>();
     for (const a of hw.items) {
-      const day = new Date(a.due).toLocaleDateString("en-US", { timeZone: TIMEZONE, weekday: "long", month: "short", day: "numeric" });
-      const time = new Date(a.due).toLocaleTimeString("en-US", { timeZone: TIMEZONE, hour: "numeric", minute: "2-digit" });
+      const tz = currentTimezone();
+      const day = new Date(a.due).toLocaleDateString("en-US", { timeZone: tz, weekday: "long", month: "short", day: "numeric" });
+      const time = new Date(a.due).toLocaleTimeString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" });
       byDay.set(day, [...(byDay.get(day) ?? []), `  • ${a.course}: ${a.title} (${time})`]);
     }
     const text = "📚 This week\n" + [...byDay].map(([day, lines]) => `${day}\n${lines.join("\n")}`).join("\n");
@@ -93,7 +97,7 @@ export async function buildWeekAhead(user: UserState): Promise<Reply[] | null> {
     bubbles.push(say(text, { kind: "application", appIds: soon.map((a) => a.id), text }));
   }
 
-  const events = await getEvents({
+  const events = await getEvents(user, {
     from: new Date(),
     to: new Date(Date.now() + 7 * 24 * 3600_000),
     keywords: user.events.keywords,
@@ -112,14 +116,14 @@ export async function buildWeekAhead(user: UserState): Promise<Reply[] | null> {
   return [
     say(`${header}${user.name ? `, ${user.name}` : ""}! Here's what's coming up:`),
     ...bubbles,
-    say('❤️ any bubble to put it on your calendar, or say "add this week to my calendar".'),
+    say('❤️ any bubble to get Google Calendar links for it, or say "add this week to my calendar".'),
   ];
 }
 
+/** Midnight tonight in the student's timezone (to the hour, which is all the brief needs). */
 function endOfToday(): Date {
-  const d = new Date();
-  d.setHours(23, 59, 59, 999);
-  return d;
+  const now = new Date();
+  return new Date(now.getTime() + (24 - localHour(now)) * 3600_000 - now.getMinutes() * 60_000);
 }
 
 /** Flatten bubbles into one string for chat history. */

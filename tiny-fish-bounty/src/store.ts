@@ -26,23 +26,56 @@ export interface Course {
   sites: CourseSite[];
 }
 
+export interface JobBoard {
+  url: string;
+  label: string;
+  /** Posting ids already seen on this board (for "new posting" alerts). */
+  knownIds: string[];
+  lastChecked?: number;
+  failures: number;
+  /** "agent" when plain Fetch found nothing and the TinyFish Agent has to browse the board. */
+  mode: "fetch" | "agent";
+}
+
 export interface InternshipPrefs {
+  /** What they're looking for, in their own words ("marketing internships in Chicago"). */
+  description: string;
+  /** Watch the Simplify tech-internship list (only for tech roles). */
+  simplify: boolean;
   roles: string[]; // Simplify categories, e.g. "Software", "AI/ML/Data", "Quant"
+  /** Title words that make a board posting relevant, e.g. ["marketing", "brand"]. */
   keywords: string[];
+  /** Only internships / co-ops / fellowships (not full-time roles) from job boards. */
+  internshipOnly?: boolean;
   locations: string[];
   remoteOk: boolean;
   needsSponsorship: boolean;
   alerts: boolean;
   /** Companies muted with a 👎 tapback. */
   excludeCompanies: string[];
+  /** Job boards / careers pages the student asked Scout to check. */
+  boards: JobBoard[];
+  /** Web-search watch for new postings (TinyFish Search, recent results). */
+  searchQuery?: string;
+  searchLastChecked?: number;
+}
+
+/** Where the student's school posts events. Engage and Localist have public APIs; anything else is read as a page. */
+export type EventSource =
+  | { kind: "engage" | "localist"; host: string; label: string }
+  | { kind: "page"; url: string; label: string };
+
+export interface SchoolInfo {
+  name: string;
+  timezone: string;
 }
 
 /** What a bot message was about, so a tapback on it knows what to act on. */
 export interface MessageRef {
   kind: "homework" | "reminder" | "internships" | "events" | "application" | "chat" | "text";
   assignments?: string[]; // assignment keys
-  events?: string[]; // HeelLife event ids
-  jobs?: string[]; // Simplify listing ids
+  events?: string[]; // event ids (any source)
+  jobs?: string[]; // posting ids (any source)
   appIds?: string[];
   reminderId?: string;
   /** The bubble's text (for ❓ "explain this"). */
@@ -99,11 +132,14 @@ export interface SchedulePrefs {
 
 export type OnboardingStep =
   | "intro"
+  | "school"
   | "canvas"
   | "courses"
   | "sites"
-  | "internships"
+  | "eventSource"
   | "events"
+  | "internships"
+  | "jobBoards"
   | "schedule"
   | "done";
 
@@ -117,6 +153,8 @@ export interface UserState {
   id: string; // normalized phone / Apple ID
   spaceId?: string; // iMessage chat id, for proactive texts
   name?: string;
+  school?: SchoolInfo;
+  eventSource?: EventSource;
   onboarding: { step: OnboardingStep; courseIndex: number; started?: boolean; pending?: Record<string, unknown> };
   canvasIcs?: string; // secret URL: never echo back or log
   courses: Course[];
@@ -138,9 +176,39 @@ export interface UserState {
   messageRefs: Record<string, MessageRef>;
 }
 
+/** A campus event as shown to a student (any source). */
+export interface CampusEvent {
+  id: string;
+  name: string;
+  org: string;
+  location: string;
+  start: string;
+  end: string;
+  perks: string[];
+  categories: string[];
+  summary: string;
+  url: string;
+}
+
+/** A job/internship posting from any source. */
+export interface Job {
+  id: string;
+  company: string;
+  title: string;
+  category: string;
+  locations: string[];
+  sponsorship: string;
+  url: string;
+  postedAt: string;
+  source: "simplify" | "board" | "search";
+}
+
 interface State {
   users: Record<string, UserState>;
   internships: { etag?: string; lastCheck?: number };
+  /** Events/jobs shown to students, so a tapback or "add #2" finds them after a restart. */
+  events: Record<string, CampusEvent>;
+  jobs: Record<string, Job>;
 }
 
 let state: State = load();
@@ -155,10 +223,35 @@ function load(): State {
         course.sites = course.sites.filter((s, i, all) => all.findIndex((o) => o.url === s.url) === i);
       }
     }
+    loaded.events ??= {};
+    loaded.jobs ??= {};
     return loaded;
   } catch {
-    return { users: {}, internships: {} };
+    return { users: {}, internships: {}, events: {}, jobs: {} };
   }
+}
+
+function capRecord<T>(rec: Record<string, T>, max: number): void {
+  const ids = Object.keys(rec);
+  for (const id of ids.slice(0, Math.max(0, ids.length - max))) delete rec[id];
+}
+
+export function rememberEvents(events: CampusEvent[]): void {
+  for (const e of events) state.events[e.id] = e;
+  capRecord(state.events, 400);
+}
+
+export function knownEvent(id: string): CampusEvent | undefined {
+  return state.events[id];
+}
+
+export function rememberJobs(jobs: Job[]): void {
+  for (const j of jobs) state.jobs[j.id] = j;
+  capRecord(state.jobs, 600);
+}
+
+export function knownJob(id: string): Job | undefined {
+  return state.jobs[id];
 }
 
 export function save(): void {
@@ -174,6 +267,8 @@ export function newUser(id: string): UserState {
     onboarding: { step: "intro", courseIndex: 0 },
     courses: [],
     internships: {
+      description: "",
+      simplify: false,
       roles: [],
       keywords: [],
       locations: [],
@@ -181,6 +276,7 @@ export function newUser(id: string): UserState {
       needsSponsorship: false,
       alerts: true,
       excludeCompanies: [],
+      boards: [],
     },
     events: { keywords: [], freeFood: false, eveningsOnly: false },
     schedule: { briefHour: 8, quietStart: 23, quietEnd: 8 },
@@ -201,6 +297,10 @@ function withDefaults(user: UserState): void {
   user.reminders ??= [];
   user.messageRefs ??= {};
   user.internships.excludeCompanies ??= [];
+  user.internships.boards ??= [];
+  user.internships.description ??= "";
+  // Before job sources were configurable, anyone with tech roles used the Simplify list.
+  user.internships.simplify ??= user.internships.roles.length > 0;
 }
 
 /** Remember what an outbound message was about (for tapbacks). */

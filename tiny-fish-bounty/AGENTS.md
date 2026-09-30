@@ -1,6 +1,8 @@
 # tiny-fish-bounty — agent instructions
 
-This is a [Spectrum](https://photon.codes/docs/spectrum-ts) app, pinned to `spectrum-ts@^12.10.1`. The entry point is `src/index.ts`, which configures the imessage provider(s) and runs the echo loop.
+This is **Scout**, a student copilot over iMessage: a [Spectrum](https://photon.codes/docs/spectrum-ts) app, pinned to `spectrum-ts@^12.10.1`. The entry point is `src/index.ts`, which configures the iMessage provider, routes each message through `src/bot.ts` (onboarding → quick commands → the Claude agent in `src/agent.ts`), and starts the proactive scheduler (`src/scheduler.ts`). Web work goes through TinyFish (`src/tinyfish.ts`). See the root `README.md`.
+
+- Tests: `npm test` (offline; network and Claude are blocked) and `npm run test:live` (free live calls only).
 
 ## Working in this project
 

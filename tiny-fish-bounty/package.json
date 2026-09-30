@@ -1,24 +1,26 @@
 {
-  "name": "tiny-fish-bounty",
-  "version": "0.0.1",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "start": "tsx --env-file=.env src/index.ts",
-    "dev": "tsx watch --env-file=.env src/index.ts",
-    "chat": "tsx --env-file=.env scripts/chat.ts",
-    "smoke": "tsx --env-file=.env scripts/smoke.ts",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@anthropic-ai/sdk": "^0.129.0",
-    "node-ical": "^0.27.2",
-    "spectrum-ts": "^12.10.1",
-    "zod": "^4.6.5"
-  },
-  "devDependencies": {
-    "@types/node": "^22",
-    "tsx": "^4",
-    "typescript": "^5"
-  }
+    "name":  "tiny-fish-bounty",
+    "version":  "0.0.1",
+    "private":  true,
+    "type":  "module",
+    "scripts":  {
+                    "start":  "tsx --env-file=.env src/index.ts",
+                    "dev":  "tsx watch --env-file=.env src/index.ts",
+                    "chat":  "tsx --env-file=.env scripts/chat.ts",
+                    "smoke":  "tsx --env-file=.env scripts/smoke.ts",
+                    "typecheck":  "tsc --noEmit",
+                    "test":  "tsx --test \"tests/unit/*.test.ts\"",
+                    "test:live":  "tsx --env-file=.env --test \"tests/live/*.test.ts\""
+                },
+    "dependencies":  {
+                         "@anthropic-ai/sdk":  "^0.129.0",
+                         "node-ical":  "^0.27.2",
+                         "spectrum-ts":  "^12.10.1",
+                         "zod":  "^4.6.5"
+                     },
+    "devDependencies":  {
+                            "@types/node":  "^22",
+                            "tsx":  "^4",
+                            "typescript":  "^5"
+                        }
 }

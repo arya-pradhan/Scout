@@ -10,6 +10,7 @@ import { handleReaction } from "./reactions.ts";
 import { say, type Reply, type Send } from "./reply.ts";
 import { pushHistory, resetUser, save, type UserState } from "./store.ts";
 import { TinyFishError } from "./tinyfish.ts";
+import { withTimezone } from "./config.ts";
 
 export type { Reply, Send };
 
@@ -40,7 +41,12 @@ async function sendBrief(user: UserState, send: Send): Promise<void> {
   await send(brief);
 }
 
-export async function handleText(user: UserState, rawText: string, send: Send): Promise<void> {
+/** One inbound text. Everything inside runs in the student's own timezone. */
+export function handleText(user: UserState, rawText: string, send: Send): Promise<void> {
+  return withTimezone(user.school?.timezone, () => handleTextInTimezone(user, rawText, send));
+}
+
+async function handleTextInTimezone(user: UserState, rawText: string, send: Send): Promise<void> {
   const text = rawText.trim();
   if (!text) return;
 
@@ -76,7 +82,7 @@ export async function handleText(user: UserState, rawText: string, send: Send): 
 
     // Quick commands that don't need Claude.
     if (/^(settings|setup|my settings)$/i.test(text)) {
-      await send([say(`${profileSummary(user)}\n\nTell me what to change, e.g. "brief at 9am" or "add a site for COMP 301: <link>". Text "reset" to redo setup.`)]);
+      await send([say(`${profileSummary(user)}\n\nTell me what to change, e.g. "brief at 9am" or "add a site for BIO 101: <link>". Text "reset" to redo setup.`)]);
       return;
     }
     if (/^(brief|morning brief|what'?s up today)$/i.test(text)) {
@@ -101,9 +107,11 @@ export async function handleText(user: UserState, rawText: string, send: Send): 
 
     pushHistory(user, "user", text);
     const result = await chat(user, text, notifier(user, send));
-    pushHistory(user, "assistant", result.text);
+    const replies = [say(result.text, result.ref), ...result.extras];
+    // Include extra bubbles (e.g. "📅 Tap to add…") so the next turn knows a file was already sent.
+    pushHistory(user, "assistant", repliesText(replies));
     save();
-    await send([say(result.text, result.ref), ...result.extras]);
+    await send(replies);
   } catch (err) {
     console.error(`[bot] error for ${user.id}:`, err);
     save();
@@ -122,7 +130,16 @@ export async function handleTapback(
   if (isOnboarding(user)) return;
   try {
     const ref = targetId ? user.messageRefs[targetId] : undefined;
-    await handleReaction(user, emoji, ref, targetText, send);
+    // Tapback replies ("✅ Marked done…", calendar links) belong in the conversation too.
+    const sendAndRemember: Send = async (replies) => {
+      const text = repliesText(replies);
+      if (text) {
+        pushHistory(user, "assistant", text);
+        save();
+      }
+      await send(replies);
+    };
+    await withTimezone(user.school?.timezone, () => handleReaction(user, emoji, ref, targetText, sendAndRemember));
   } catch (err) {
     console.error(`[bot] tapback error for ${user.id}:`, err);
     await send([say(friendlyError(err))]);

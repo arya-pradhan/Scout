@@ -28,6 +28,9 @@ async function request(
   init: RequestInit,
   timeoutMs: number,
 ): Promise<unknown> {
+  // Search and Fetch are free and safe to repeat. An Agent run costs credits and a retried
+  // request would start (and bill) a second run, so Agent calls are never retried.
+  const canRetry = endpoint !== "agent";
   for (let attempt = 0; ; attempt++) {
     let res: Response;
     try {
@@ -37,11 +40,11 @@ async function request(
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
-      if (attempt === 0) continue;
+      if (canRetry && attempt === 0) continue;
       throw new TinyFishError(endpoint, err instanceof Error ? err.message : String(err));
     }
     // One retry on rate limits and server errors.
-    if ((res.status === 429 || res.status >= 500) && attempt === 0) {
+    if (canRetry && (res.status === 429 || res.status >= 500) && attempt === 0) {
       await new Promise((r) => setTimeout(r, res.status === 429 ? 3000 : 1000));
       continue;
     }
@@ -223,7 +226,8 @@ export async function runAgent<T = unknown>(opts: AgentOptions): Promise<AgentRu
   if (opts.outputSchema) body.output_schema = agentSchema(opts.outputSchema);
   if (opts.profileId) Object.assign(body, { use_profile: true, profile_id: opts.profileId });
 
-  const timeoutMs = ((opts.maxDurationSeconds ?? 120) + 30) * 1000;
+  // Generous client-side wait: runs can queue before they start browsing.
+  const timeoutMs = ((opts.maxDurationSeconds ?? 120) + 150) * 1000;
   const data = (await request(
     "agent",
     AGENT_URL,

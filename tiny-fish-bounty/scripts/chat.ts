@@ -1,4 +1,4 @@
-// Talk to the bot in your terminal: same logic as iMessage, no phone needed.
+﻿// Talk to the bot in your terminal: same logic as iMessage, no phone needed.
 //   npm run chat
 // Uses a separate state file so it never touches your real iMessage setup.
 //
@@ -43,7 +43,7 @@ async function print(replies: Reply[]): Promise<void> {
 }
 
 const rl = createInterface({ input: process.stdin });
-console.log('Chatting with iRameses (terminal mode). Say "hi" to start, Ctrl+C to quit. Extras: /react <emoji>, /tick, /reminders\n');
+console.log('Chatting with Scout (terminal mode). Say "hi" to start, Ctrl+C to quit. Extras: /react <emoji>, /tick, /reminders\n');
 process.stdout.write("you › ");
 
 for await (const line of rl) {

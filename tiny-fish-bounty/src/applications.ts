@@ -4,7 +4,7 @@
 
 import { createHash } from "node:crypto";
 import { fmtDate } from "./config.ts";
-import type { Internship } from "./sources/internships.ts";
+import type { Job } from "./sources/jobs.ts";
 import { save, type Application, type AppStatus, type PrepResult, type UserState } from "./store.ts";
 import { runAgent } from "./tinyfish.ts";
 
@@ -38,7 +38,7 @@ export function saveApplication(
   return { app, isNew: true };
 }
 
-export function saveListing(user: UserState, job: Internship): { app: Application; isNew: boolean } {
+export function saveListing(user: UserState, job: Job): { app: Application; isNew: boolean } {
   return saveApplication(user, { company: job.company, title: job.title, url: job.url, listingId: job.id });
 }
 

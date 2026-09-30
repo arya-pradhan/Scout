@@ -8,18 +8,21 @@ import { z } from "zod";
 import { calendarFor, markDone } from "./actions.ts";
 import { findApplication, prepApplication, prepSummary, saveApplication, setStatus, trackerSummary } from "./applications.ts";
 import type { CalItem } from "./calendar.ts";
-import { fmtDate, MODEL, MODEL_SUPPORTS_EFFORT, MODEL_SUPPORTS_FALLBACKS, TIMEZONE } from "./config.ts";
+import { currentTimezone, fmtDate, MODEL, MODEL_SUPPORTS_EFFORT, MODEL_SUPPORTS_FALLBACKS, utcOffset } from "./config.ts";
 import { clearHomeworkCache, upcomingHomework } from "./homework.ts";
 import { claude } from "./llm.ts";
 import { profileSummary } from "./onboarding.ts";
 import { say, type Effect, type Reply } from "./reply.ts";
 import { readCourseSiteDeep, upsertSite } from "./sources/courseSites.ts";
-import { getEvents } from "./sources/events.ts";
-import { loadListings, matchesPrefs, verifyPosting } from "./sources/internships.ts";
+import { detectEventSource, getEvents } from "./sources/events.ts";
+import { readJobBoardDeep } from "./sources/jobBoards.ts";
+import { collectJobs, getJobById, matchesPrefs, SIMPLIFY_ROLES, verifyPosting } from "./sources/jobs.ts";
+import { searchJobs } from "./sources/jobSearch.ts";
 import { save, shortId, type MessageRef, type UserState } from "./store.ts";
+import { plainText } from "./text.ts";
 import { fetchPage, search } from "./tinyfish.ts";
 
-const SYSTEM = `You are iRameses, an assistant a UNC Chapel Hill student texts over iMessage. You help with homework deadlines (Canvas + professor course sites), internships (the Simplify Summer 2027 list, plus the student's own application tracker), campus events (HeelLife), reminders, and research on the live web.
+const SYSTEM = `You are Scout 🧭, a study copilot a college student texts over iMessage. Their school and setup are in your context. You help with homework deadlines (Canvas + professor course sites), jobs and internships in any field (their search watch, job boards they added, and the Simplify list for tech roles, plus their own application tracker), campus events (from wherever their school posts them), reminders, and research on the live web.
 
 How to write:
 - This is a text thread. Plain text only: iMessage does not render markdown, so no asterisks, no # headings, no tables.
@@ -34,22 +37,25 @@ Trust rules (these matter more than anything else):
 - For general questions (what a company's internship is like, what a club does, how to do something), use search_web, then read_page on the 1-2 best results, and cite the links you used.
 - You only read the web. You never submit assignments, RSVP, apply, fill in forms, email, or buy anything. If asked, say so and give the link so the student can do it.
 - Application essays: after prep_application, you may offer to draft answers, but only write drafts when the student says yes. Drafts are text for them to edit and paste themselves.
-- Calendar: you can't write to their calendar. add_to_calendar sends a calendar file they tap to add (they approve it with "Add"). Offer it after listing events or deadlines, but only call it once they say yes or name the items. After calling it, reply with one short line at most.
+- Calendar: you can't write to their calendar. add_to_calendar texts Google Calendar links; they tap one and hit Save (Apple Calendar isn't supported yet). Offer it after listing events or deadlines, but only call it once they say yes or name the items. After calling it, reply with one short line at most.
 - Never repeat the student's Canvas feed link.
 
 Tool tips:
 - check_posting and prep_application open real pages in a browser and take about a minute. Use them when the student asks, not for every listing.
 - "done with X" / "turned in X" → mark_done. "I applied to X" / "got an interview" / "got an offer" / "rejected" → update_application (save it first if it isn't tracked).
+- "add <assignment> to my calendar" → call add_to_calendar with assignment_titles directly; it searches the next 60 days itself. For "when is X due?", use get_homework with days_ahead 60, not just this week.
 - "remind me…" → set_reminder. "snooze" / "remind me later" about something you just sent → set_reminder with that content; if no time is given, use 2 hours from now and say so.
-- Requests to change their setup (courses, course sites, brief time, alert preferences) → update_settings.
-- The student can tap-back your texts: 👍 marks homework done or completes a reminder, ❤️ saves internships or adds events/deadlines to their calendar, 👎 hides a company, ❓ asks you to explain. Mention this only if they ask how.
+- Requests to change their setup (courses, course sites, events page, what jobs they want, brief time, alert preferences) → update_settings. A new job board or careers page → add_job_board.
+- "any new jobs / internships?" → get_jobs. For a different kind of role than their saved one, pass search_query to search the web now.
+- Scout can't read sites that need the student's login (Handshake, LinkedIn, Gradescope); say so and suggest a public page instead.
+- The student can tap-back your texts: 👍 marks homework done or completes a reminder, ❤️ saves postings or adds events/deadlines to their calendar, 👎 hides a company, ❓ asks you to explain. Mention this only if they ask how.
 - When the student shares a lasting preference or fact about themselves, save it with remember.`;
 
 interface ToolContext {
   user: UserState;
   /** Send an interim text (e.g. "checking the live posting…") while a slow tool runs. */
   notify: (text: string) => Promise<void>;
-  /** Bubbles to send after Claude's reply (calendar files, confetti). */
+  /** Bubbles to send after Claude's reply (calendar links, confetti). */
   extras: Reply[];
   effect?: Effect;
   /** What tools listed this turn, so a tapback on the reply can act on the items it mentions. */
@@ -118,7 +124,8 @@ function buildTools(ctx: ToolContext) {
 
     betaZodTool({
       name: "get_events",
-      description: "Upcoming UNC campus events from HeelLife, with time, place, perks (e.g. Free Food) and link.",
+      description:
+        "Upcoming campus events from the student's school events source (their student-org site, campus calendar, or events page), with time, place, perks (e.g. Free Food) and link.",
       inputSchema: z.object({
         from_iso: z.string().optional().describe("Start of window, ISO 8601 with offset. Default: now."),
         to_iso: z.string().optional().describe("End of window, ISO 8601 with offset. Default: 3 days from now."),
@@ -129,7 +136,10 @@ function buildTools(ctx: ToolContext) {
       }),
       run: (input) =>
         safe("get_events", async () => {
-          const events = await getEvents({
+          if (!user.eventSource) {
+            return { error: "No events source set up yet. Ask where their school posts events (a link), then save it with update_settings.events_url." };
+          }
+          const events = await getEvents(user, {
             from: input.from_iso ? new Date(input.from_iso) : undefined,
             to: input.to_iso ? new Date(input.to_iso) : undefined,
             keywords: input.keywords,
@@ -153,35 +163,88 @@ function buildTools(ctx: ToolContext) {
     }),
 
     betaZodTool({
-      name: "get_internships",
+      name: "get_jobs",
       description:
-        "Open Summer 2027 internships from the Simplify list (updated daily), newest first. Listings are not verified live; use check_posting for that.",
+        "Job and internship postings from the student's sources: their web-search watch, job boards they added, and the Simplify list if they want tech roles. Newest first. Not verified live; use check_posting for that. Pass search_query to run a fresh web search for a different kind of role.",
       inputSchema: z.object({
-        query: z.string().optional().describe("Words that must all appear in company/title/category, e.g. 'google' or 'data science'"),
+        search_query: z
+          .string()
+          .optional()
+          .describe("Run a live web search for these postings now (e.g. 'summer research internship neuroscience Boston')"),
+        filter: z.string().optional().describe("Words that must all appear in company/title/location, e.g. 'google' or 'marketing'"),
         posted_within_days: z.number().int().min(1).max(365).optional(),
-        use_my_preferences: z.boolean().describe("Filter by the student's saved role/location/sponsorship preferences"),
+        use_my_preferences: z.boolean().describe("Filter by the student's saved location/sponsorship preferences"),
         limit: z.number().int().min(1).max(15).optional(),
       }),
       run: (input) =>
-        safe("get_internships", async () => {
-          const all = await loadListings();
+        safe("get_jobs", async () => {
+          const { jobs: all, failed } = await collectJobs(user);
+          if (input.search_query) all.unshift(...(await searchJobs(input.search_query, true)));
+          if (!all.length && !failed.length && !input.search_query) {
+            return { jobs: [], note: "No job sources set up. Offer to search the web (search_query) or add a job board." };
+          }
           const since = input.posted_within_days ? Date.now() - input.posted_within_days * 24 * 3600_000 : 0;
-          const noPrefs = { ...user.internships, roles: [], locations: [], needsSponsorship: false };
+          const loose = { ...user.internships, roles: [], locations: [], needsSponsorship: false };
+          const seen = new Set<string>();
           const jobs = all
+            .filter((j) => (seen.has(j.id) ? false : (seen.add(j.id), true)))
             .filter((j) => new Date(j.postedAt).getTime() >= since)
-            .filter((j) => matchesPrefs(j, input.use_my_preferences ? user.internships : noPrefs, input.query))
+            .filter((j) => matchesPrefs(j, input.use_my_preferences ? user.internships : loose, input.filter))
             .slice(0, input.limit ?? 6);
           for (const j of jobs) ctx.listed.jobs.set(j.id, j.url);
-          return jobs.map((j) => ({
-            id: j.id,
-            company: j.company,
-            title: j.title,
-            category: j.category,
-            locations: j.locations.slice(0, 3),
-            sponsorship: j.sponsorship,
-            posted: fmtDate(j.postedAt),
-            url: j.url,
-          }));
+          return {
+            jobs: jobs.map((j) => ({
+              id: j.id,
+              company: j.company,
+              title: j.title,
+              locations: j.locations.slice(0, 3),
+              source: j.source === "simplify" ? "Simplify list" : j.source === "board" ? "job board" : "web search",
+              first_seen: fmtDate(j.postedAt),
+              url: j.url,
+            })),
+            failed_sources: failed,
+          };
+        }),
+    }),
+
+    betaZodTool({
+      name: "add_job_board",
+      description:
+        "Start watching a job board or careers page (any field). Scout reads it now (TinyFish Fetch, or the Agent for boards that need a real browser) and texts when new postings appear. Can't read login-only sites.",
+      inputSchema: z.object({
+        url: z.string(),
+        title_keywords: z
+          .array(z.string())
+          .optional()
+          .describe("If they said which roles they care about (e.g. 'marketing roles'), lowercase title words like ['marketing','brand']"),
+      }),
+      run: (input) =>
+        safe("add_job_board", async () => {
+          if (input.title_keywords?.length) user.internships.keywords = input.title_keywords;
+          if (user.internships.boards.some((b) => b.url === input.url)) return { already_watching: true };
+          const { jobs, mode } = await readJobBoardDeep(input.url, () =>
+            ctx.notify("That board loads its postings in the browser, so I'm opening it for real… (~1-2 min) 🔎"),
+          );
+          if (!jobs.length) return { error: "No postings found on that page (it may need a login or be empty)." };
+          user.internships.boards.push({
+            url: input.url,
+            label: new URL(input.url).hostname.replace(/^www\./, ""),
+            knownIds: jobs.map((j) => j.id),
+            lastChecked: Date.now(),
+            failures: 0,
+            mode,
+          });
+          user.internships.alerts = true;
+          save();
+          const fits = jobs.filter((j) => matchesPrefs(j, user.internships));
+          for (const j of fits.slice(0, 5)) ctx.listed.jobs.set(j.id, j.url);
+          return {
+            watching: true,
+            postings_now: jobs.length,
+            fit_their_preferences: fits.length,
+            filter: user.internships.keywords.length ? `titles containing ${user.internships.keywords.join(", ")}` : "none (all roles)",
+            examples: fits.slice(0, 3).map((j) => ({ id: j.id, title: j.title, company: j.company, locations: j.locations, url: j.url })),
+          };
         }),
     }),
 
@@ -189,7 +252,7 @@ function buildTools(ctx: ToolContext) {
       name: "check_posting",
       description:
         "Open a job posting in a real browser (TinyFish Agent) and report whether it is still accepting applications, the deadline, pay, and key requirements. Takes ~1 minute. Never applies.",
-      inputSchema: z.object({ url: z.string().describe("The posting URL from get_internships"), company: z.string() }),
+      inputSchema: z.object({ url: z.string().describe("The posting URL from get_jobs"), company: z.string() }),
       run: (input) =>
         safe("check_posting", async () => {
           await ctx.notify(`Opening the live ${input.company} posting to check… (~1 min) 🔎`);
@@ -199,12 +262,17 @@ function buildTools(ctx: ToolContext) {
 
     betaZodTool({
       name: "save_application",
-      description: "Add an internship to the student's application tracker (status 'saved').",
-      inputSchema: z.object({ company: z.string(), title: z.string(), url: z.string().describe("Posting URL from get_internships or the student") }),
+      description: "Add a job or internship to the student's application tracker (status 'saved').",
+      inputSchema: z.object({
+        company: z.string(),
+        title: z.string(),
+        url: z.string().describe("Posting URL from get_jobs or the student"),
+        job_id: z.string().optional().describe("The id from get_jobs, if it came from there"),
+      }),
       run: (input) =>
         safe("save_application", async () => {
-          const listing = (await loadListings()).find((j) => j.url === input.url);
-          const { app, isNew } = saveApplication(user, { ...input, listingId: listing?.id });
+          const job = input.job_id ? await getJobById(input.job_id) : undefined;
+          const { app, isNew } = saveApplication(user, { company: input.company, title: input.title, url: input.url, listingId: job?.id });
           return { id: app.id, status: app.status, already_tracked: !isNew };
         }),
     }),
@@ -316,9 +384,9 @@ function buildTools(ctx: ToolContext) {
     betaZodTool({
       name: "add_to_calendar",
       description:
-        "Send a calendar file the student taps to add to Apple Calendar (they approve with 'Add'). Build it from ids returned by get_events / get_homework, or custom items with times the student gave you. Only call after the student asked or said yes.",
+        "Text the student Google Calendar 'add event' links (they tap one and hit Save). Build them from ids returned by get_events / get_homework, assignment names, or custom items with times the student gave you. Only call after the student asked or said yes.",
       inputSchema: z.object({
-        event_ids: z.array(z.string()).optional().describe("HeelLife event ids from get_events"),
+        event_ids: z.array(z.string()).optional().describe("Event ids from get_events"),
         assignment_ids: z.array(z.string()).optional().describe("Homework ids from get_homework"),
         assignment_titles: z
           .array(z.string())
@@ -355,7 +423,11 @@ function buildTools(ctx: ToolContext) {
           }
           const { replies, added, missing } = await calendarFor(user, { events: input.event_ids, assignments: assignmentKeys, custom });
           ctx.extras.push(...replies);
-          return { sent_calendar_file_with: added, not_found: missing, note: "The student still has to tap Add. Keep your reply to one short line." };
+          return {
+            sent_google_calendar_links_for: added,
+            not_found: missing,
+            note: "A separate bubble with the links is sent right after your reply. They still have to tap a link and hit Save. Keep your reply to one short line and don't repeat the links.",
+          };
         }),
     }),
 
@@ -364,11 +436,11 @@ function buildTools(ctx: ToolContext) {
       description: "Search the live web (TinyFish Search). Returns titles, URLs and snippets.",
       inputSchema: z.object({
         query: z.string(),
-        domains: z.array(z.string()).optional().describe("Restrict to these domains, e.g. ['unc.edu']"),
+        domains: z.array(z.string()).optional().describe("Restrict to these domains, e.g. their school's domain"),
       }),
       run: (input) =>
         safe("search_web", async () =>
-          (await search(input.query, { includeDomains: input.domains, purpose: `Answer a UNC student's question: ${input.query}` })).slice(0, 6),
+          (await search(input.query, { includeDomains: input.domains, purpose: `Answer a question from a student at ${user.school?.name ?? "a college"}: ${input.query}` })).slice(0, 6),
         ),
     }),
 
@@ -388,7 +460,7 @@ function buildTools(ctx: ToolContext) {
       name: "update_settings",
       description: "Change the student's setup. Only include fields they asked to change.",
       inputSchema: z.object({
-        add_course: z.string().optional().describe('Course code like "COMP 455"'),
+        add_course: z.string().optional().describe('Course code like "BIO 101"'),
         remove_course: z.string().optional(),
         add_course_site: z
           .object({ course: z.string(), url: z.string() })
@@ -398,11 +470,18 @@ function buildTools(ctx: ToolContext) {
         brief_hour: z.number().int().min(0).max(23).optional(),
         quiet_start: z.number().int().min(0).max(23).optional(),
         quiet_end: z.number().int().min(0).max(23).optional(),
-        internship_alerts: z.boolean().optional(),
-        internship_roles: z.array(z.enum(["Software", "AI/ML/Data", "Quant", "Product", "Hardware"])).optional(),
-        internship_locations: z.array(z.string()).optional(),
+        job_alerts: z.boolean().optional(),
+        job_description: z.string().optional().describe("What jobs/internships they want now, in their words"),
+        job_search_query: z.string().optional().describe("The web-search watch for new postings, e.g. 'summer 2027 marketing internship Chicago'"),
+        simplify_tech_list: z.boolean().optional().describe("Watch the Simplify tech-internship list (tech roles only)"),
+        simplify_roles: z.array(z.enum(SIMPLIFY_ROLES)).optional(),
+        job_locations: z.array(z.string()).optional(),
+        job_title_keywords: z.array(z.string()).optional().describe("Words a relevant job-board title contains, e.g. ['marketing','brand']"),
+        internship_only: z.boolean().optional().describe("Only internships/co-ops/research positions from job boards"),
         needs_sponsorship: z.boolean().optional(),
+        remove_job_board: z.string().optional().describe("URL of a job board to stop watching"),
         unmute_companies: z.array(z.string()).optional().describe("Companies to show again after a 👎"),
+        events_url: z.string().optional().describe("Link to where their school posts events (student org site or campus calendar)"),
         event_keywords: z.array(z.string()).optional(),
         free_food: z.boolean().optional(),
         evenings_only: z.boolean().optional(),
@@ -445,10 +524,33 @@ function buildTools(ctx: ToolContext) {
           if (input.brief_hour !== undefined) user.schedule.briefHour = input.brief_hour;
           if (input.quiet_start !== undefined) user.schedule.quietStart = input.quiet_start;
           if (input.quiet_end !== undefined) user.schedule.quietEnd = input.quiet_end;
-          if (input.internship_alerts !== undefined) user.internships.alerts = input.internship_alerts;
-          if (input.internship_roles) user.internships.roles = input.internship_roles;
-          if (input.internship_locations) user.internships.locations = input.internship_locations;
-          if (input.needs_sponsorship !== undefined) user.internships.needsSponsorship = input.needs_sponsorship;
+          const jobs = user.internships;
+          if (input.job_alerts !== undefined) jobs.alerts = input.job_alerts;
+          if (input.job_description) jobs.description = input.job_description;
+          if (input.job_search_query) {
+            jobs.searchQuery = input.job_search_query;
+            jobs.searchLastChecked = undefined;
+          }
+          if (input.simplify_tech_list !== undefined) jobs.simplify = input.simplify_tech_list;
+          if (input.simplify_roles) jobs.roles = input.simplify_roles;
+          if (input.job_locations) jobs.locations = input.job_locations;
+          if (input.job_title_keywords) jobs.keywords = input.job_title_keywords;
+          if (input.internship_only !== undefined) jobs.internshipOnly = input.internship_only;
+          if (input.needs_sponsorship !== undefined) jobs.needsSponsorship = input.needs_sponsorship;
+          if (input.remove_job_board) {
+            jobs.boards = jobs.boards.filter((b) => b.url !== input.remove_job_board);
+            notes.push("stopped watching that job board");
+          }
+          if (input.events_url) {
+            const source = await detectEventSource(input.events_url);
+            const previous = user.eventSource;
+            user.eventSource = source;
+            const found = await getEvents(user, { to: new Date(Date.now() + 14 * 24 * 3600_000), limit: 50 }).catch(() => []);
+            if (!found.length) {
+              user.eventSource = previous;
+              notes.push("couldn't find dated events at that link, so the events source wasn't changed");
+            } else notes.push(`events now come from ${source.label} (${found.length} in the next 2 weeks)`);
+          }
           if (input.unmute_companies) {
             const un = input.unmute_companies.map((c) => c.toLowerCase());
             user.internships.excludeCompanies = user.internships.excludeCompanies.filter((c) => !un.includes(c.toLowerCase()));
@@ -478,15 +580,16 @@ function buildTools(ctx: ToolContext) {
 }
 
 function context(user: UserState): string {
-  const now = new Date().toLocaleString("en-US", { timeZone: TIMEZONE, dateStyle: "full", timeStyle: "short" });
-  const offset = new Date().toLocaleString("en-US", { timeZone: TIMEZONE, timeZoneName: "longOffset" }).split(" ").pop();
+  const tz = currentTimezone();
+  const now = new Date().toLocaleString("en-US", { timeZone: tz, dateStyle: "full", timeStyle: "short" });
+  const offset = `UTC${utcOffset()}`;
   const apps = user.applications.length
     ? `\n\nApplication tracker:\n${user.applications.map((a) => `- ${a.company}: ${a.title} [${a.status}] id=${a.id}`).join("\n")}`
     : "";
   const reminders = user.reminders.filter((r) => !r.sentAt && !r.done);
   const rem = reminders.length ? `\n\nPending reminders:\n${reminders.map((r) => `- ${fmtDate(r.at)}: ${r.text}`).join("\n")}` : "";
   return (
-    `Right now: ${now} (${TIMEZONE}, ${offset}).\n\n${profileSummary(user)}` +
+    `Right now: ${now} (${tz}, ${offset}).\n\n${profileSummary(user)}` +
     apps +
     rem +
     (user.facts.length ? `\n\nThings the student told you:\n${user.facts.map((f) => `- ${f}`).join("\n")}` : "")
@@ -520,7 +623,7 @@ function refFor(reply: string, listed: ToolContext["listed"]): MessageRef | unde
 export interface ChatResult {
   text: string;
   ref?: MessageRef;
-  /** Bubbles to send after the reply: calendar files, confetti, fireworks. */
+  /** Bubbles to send after the reply: calendar links, confetti, fireworks. */
   extras: Reply[];
 }
 
@@ -566,15 +669,4 @@ export async function chat(user: UserState, text: string, notify: ToolContext["n
     reply += `\n\nSources:\n${[...ctx.pagesRead].slice(0, 3).join("\n")}`;
   }
   return { text: reply, ref: refFor(reply, ctx.listed), extras: ctx.extras };
-}
-
-/** iMessage shows markdown literally, so strip it whatever the model writes. */
-function plainText(s: string): string {
-  return s
-    .replace(/\*\*(.+?)\*\*/g, "$1")
-    .replace(/__(.+?)__/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/^\s*[-*]\s+/gm, "• ")
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, "$1: $2")
-    .replace(/`([^`]+)`/g, "$1");
 }
