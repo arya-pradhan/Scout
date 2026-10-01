@@ -39,8 +39,8 @@ Tips: keep each reply on screen long enough to read (~2s); speed up only the wai
 > It works at any school: onboarding over text asks where your school posts events and what jobs you want, in any field.
 >
 > Built for the TinyFish Students program × Photon iMessage bounty. Demo 👇
-> Code: https://github.com/arya-pradhan/tiny-fish-iMessage-Assistant
-> Site: [your Vercel link]
+> Code: https://github.com/arya-pradhan/Scout
+> Site: [[Scout](https://scout-site-eight.vercel.app/)]
 >
 > @TinyFish @Photon #AIagents #iMessage #buildinpublic
 
