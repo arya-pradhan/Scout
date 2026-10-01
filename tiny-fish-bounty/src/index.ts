@@ -1,7 +1,7 @@
 import { Spectrum, attachment, richlink, type Space } from "spectrum-ts";
 import { effect, imessage, nativeContactCard } from "@spectrum-ts/imessage";
 import { handleTapback, handleText, type Reply } from "./bot.ts";
-import { isAllowed, normalizeSender } from "./config.ts";
+import { isAllowed, log, maskId, normalizeSender } from "./config.ts";
 import { startScheduler } from "./scheduler.ts";
 import { getUser, recordRef, save, type UserState } from "./store.ts";
 
@@ -55,7 +55,7 @@ for await (const [space, message] of app.messages) {
   if (message.direction !== "inbound") continue;
   const senderId = normalizeSender(message.sender?.id ?? "");
   if (!senderId || !isAllowed(senderId)) {
-    console.log(`[ignored] message from ${message.sender?.id ?? "unknown"} (not in ALLOWED_PHONES)`);
+    log(`[ignored] message from ${maskId(message.sender?.id ?? "")} (not in ALLOWED_PHONES)`);
     continue;
   }
 
@@ -79,7 +79,7 @@ for await (const [space, message] of app.messages) {
       await send([{ text: "I can only read text messages for now. Mind typing that out?" }]);
       return;
     }
-    console.log(`[in] ${senderId}: ${content.text.slice(0, 80)}`);
+    log(`[in] ${maskId(senderId)}: ${content.text.slice(0, 80)}`);
     await app.responding(space, () => handleText(user, content.text, send));
   });
   queues.set(senderId, next.catch((err) => console.error("[queue]", err)));

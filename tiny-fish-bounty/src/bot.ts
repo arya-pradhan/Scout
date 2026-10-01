@@ -10,7 +10,7 @@ import { handleReaction } from "./reactions.ts";
 import { say, type Reply, type Send } from "./reply.ts";
 import { pushHistory, resetUser, save, type UserState } from "./store.ts";
 import { TinyFishError } from "./tinyfish.ts";
-import { withTimezone } from "./config.ts";
+import { maskId, withTimezone } from "./config.ts";
 
 export type { Reply, Send };
 
@@ -113,7 +113,7 @@ async function handleTextInTimezone(user: UserState, rawText: string, send: Send
     save();
     await send(replies);
   } catch (err) {
-    console.error(`[bot] error for ${user.id}:`, err);
+    console.error(`[bot] error for ${maskId(user.id)}:`, err);
     save();
     await send([say(friendlyError(err))]);
   }
@@ -141,7 +141,7 @@ export async function handleTapback(
     };
     await withTimezone(user.school?.timezone, () => handleReaction(user, emoji, ref, targetText, sendAndRemember));
   } catch (err) {
-    console.error(`[bot] tapback error for ${user.id}:`, err);
+    console.error(`[bot] tapback error for ${maskId(user.id)}:`, err);
     await send([say(friendlyError(err))]);
   }
 }

@@ -8,7 +8,7 @@ import { z } from "zod";
 import { calendarFor, markDone } from "./actions.ts";
 import { findApplication, prepApplication, prepSummary, saveApplication, setStatus, trackerSummary } from "./applications.ts";
 import type { CalItem } from "./calendar.ts";
-import { currentTimezone, fmtDate, MODEL, MODEL_SUPPORTS_EFFORT, MODEL_SUPPORTS_FALLBACKS, utcOffset } from "./config.ts";
+import { currentTimezone, fmtDate, log, MODEL, MODEL_SUPPORTS_EFFORT, MODEL_SUPPORTS_FALLBACKS, utcOffset } from "./config.ts";
 import { clearHomeworkCache, upcomingHomework } from "./homework.ts";
 import { claude } from "./llm.ts";
 import { profileSummary } from "./onboarding.ts";
@@ -66,6 +66,7 @@ interface ToolContext {
 
 /** Tool results go back to Claude as JSON; errors become a readable message instead of crashing the turn. */
 async function safe(name: string, fn: () => Promise<unknown>): Promise<string> {
+  log(`[scout] tool ${name}`);
   try {
     return JSON.stringify(await fn());
   } catch (err) {

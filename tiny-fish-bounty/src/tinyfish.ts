@@ -1,6 +1,8 @@
 // Thin typed wrappers over the three TinyFish endpoints we use.
 // Docs: https://docs.tinyfish.ai/for-coding-agents
 
+import { log } from "./config.ts";
+
 const SEARCH_URL = "https://api.search.tinyfish.ai";
 const FETCH_URL = "https://api.fetch.tinyfish.ai";
 const AGENT_URL = "https://agent.tinyfish.ai/v1/automation/run";
@@ -14,6 +16,14 @@ export class TinyFishError extends Error {
   ) {
     super(`TinyFish ${endpoint}: ${message}`);
   }
+}
+
+const seconds = (start: number) => `${((Date.now() - start) / 1000).toFixed(1)}s`;
+
+/** Host names only: never full URLs, which can carry tokens or private paths. */
+function hosts(urls: string[]): string {
+  const names = [...new Set(urls.map((u) => { try { return new URL(u).host; } catch { return "?"; } }))];
+  return names.slice(0, 3).join(", ") + (names.length > 3 ? ` +${names.length - 3}` : "");
 }
 
 function apiKey(): string {
@@ -31,6 +41,7 @@ async function request(
   // Search and Fetch are free and safe to repeat. An Agent run costs credits and a retried
   // request would start (and bill) a second run, so Agent calls are never retried.
   const canRetry = endpoint !== "agent";
+  const start = Date.now();
   for (let attempt = 0; ; attempt++) {
     let res: Response;
     try {
@@ -41,7 +52,9 @@ async function request(
       });
     } catch (err) {
       if (canRetry && attempt === 0) continue;
-      throw new TinyFishError(endpoint, err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      log(`[tinyfish] ${endpoint} failed after ${seconds(start)}: ${message.slice(0, 120)}`);
+      throw new TinyFishError(endpoint, message);
     }
     // One retry on rate limits and server errors.
     if (canRetry && (res.status === 429 || res.status >= 500) && attempt === 0) {
@@ -50,6 +63,7 @@ async function request(
     }
     if (!res.ok) {
       const body = await res.text().catch(() => "");
+      log(`[tinyfish] ${endpoint} failed: HTTP ${res.status}`);
       throw new TinyFishError(endpoint, `HTTP ${res.status} ${body.slice(0, 200)}`, res.status);
     }
     return res.json();
@@ -77,16 +91,20 @@ export async function search(query: string, opts: SearchOptions = {}): Promise<S
   if (opts.recencyMinutes) params.set("recency_minutes", String(opts.recencyMinutes));
   for (const d of opts.includeDomains ?? []) params.append("include_domains", d);
 
+  const start = Date.now();
   const data = (await request("search", `${SEARCH_URL}?${params}`, { method: "GET" }, 15_000)) as {
     results?: Array<Record<string, unknown>>;
   };
-  return (data.results ?? [])
+  const results = (data.results ?? [])
     .map((r) => ({
       title: String(r.title ?? ""),
       url: String(r.url ?? r.link ?? ""),
       snippet: String(r.snippet ?? r.description ?? r.content ?? ""),
     }))
     .filter((r) => r.url);
+  const recent = opts.recencyMinutes ? `, last ${Math.round(opts.recencyMinutes / 1440) || 1}d` : "";
+  log(`[tinyfish] search "${query.slice(0, 60)}"${recent} → ${results.length} results (${seconds(start)})`);
+  return results;
 }
 
 // ---------- Fetch ----------
@@ -130,6 +148,7 @@ export async function fetchPages(
   if (opts.ttl !== undefined) body.ttl = opts.ttl;
   if (opts.links) body.links = true;
 
+  const start = Date.now();
   const data = (await request(
     "fetch",
     FETCH_URL,
@@ -153,6 +172,8 @@ export async function fetchPages(
     error: String(e.error ?? "unknown_error"),
     status: typeof e.status === "number" ? e.status : undefined,
   }));
+  const failed = failures.length ? `, ${failures.length} failed` : "";
+  log(`[tinyfish] fetch ${pages.length}/${urls.length} page${urls.length === 1 ? "" : "s"} from ${hosts(urls)}${failed} (${seconds(start)})`);
   return { pages, failures };
 }
 
@@ -228,6 +249,8 @@ export async function runAgent<T = unknown>(opts: AgentOptions): Promise<AgentRu
 
   // Generous client-side wait: runs can queue before they start browsing.
   const timeoutMs = ((opts.maxDurationSeconds ?? 120) + 150) * 1000;
+  const start = Date.now();
+  log(`[tinyfish] agent started: browsing ${hosts([opts.url])} (read-only)`);
   const data = (await request(
     "agent",
     AGENT_URL,
@@ -236,6 +259,7 @@ export async function runAgent<T = unknown>(opts: AgentOptions): Promise<AgentRu
   )) as Record<string, unknown>;
 
   const status = String(data.status ?? "UNKNOWN");
+  log(`[tinyfish] agent ${status} on ${hosts([opts.url])} in ${seconds(start)}, ${Number(data.num_of_steps ?? 0)} steps`);
   if (status !== "COMPLETED") {
     throw new TinyFishError("agent", `run ${String(data.run_id)} ended ${status}: ${JSON.stringify(data.error)}`);
   }

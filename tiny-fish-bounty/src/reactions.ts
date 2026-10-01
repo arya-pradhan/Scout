@@ -7,6 +7,7 @@
 
 import { calendarFor, markDone, saveJobs } from "./actions.ts";
 import { chat } from "./agent.ts";
+import { log, maskId } from "./config.ts";
 import { getJobById } from "./sources/jobs.ts";
 import { say, type Send } from "./reply.ts";
 import { save, type MessageRef, type UserState } from "./store.ts";
@@ -33,7 +34,7 @@ export async function handleReaction(
   send: Send,
 ): Promise<void> {
   const kind = normalizeTapback(rawEmoji);
-  console.log(`[tapback] ${user.id}: ${JSON.stringify(rawEmoji)} → ${kind} on ${ref?.kind ?? "unknown message"}`);
+  log(`[tapback] ${maskId(user.id)}: ${JSON.stringify(rawEmoji)} → ${kind} on ${ref?.kind ?? "unknown message"}`);
 
   if (kind === "question") {
     const about = ref?.text ?? targetText;

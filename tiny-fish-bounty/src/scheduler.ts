@@ -6,7 +6,7 @@
 
 import { prepApplication } from "./applications.ts";
 import { buildBrief, buildWeekAhead, repliesText } from "./brief.ts";
-import { INTERNSHIP_CHECK_MS, SCHEDULER_TICK_MS, SITE_CHECK_MS, fmtDate, localDay, localHour, localWeekday, withTimezone } from "./config.ts";
+import { INTERNSHIP_CHECK_MS, SCHEDULER_TICK_MS, SITE_CHECK_MS, fmtDate, localDay, localHour, localWeekday, maskId, withTimezone } from "./config.ts";
 import { upcomingHomework } from "./homework.ts";
 import { say, type Reply } from "./reply.ts";
 import { readCourseSite } from "./sources/courseSites.ts";
@@ -224,7 +224,7 @@ async function dueReminders(users: UserState[], send: ProactiveSend): Promise<vo
       save();
       const text = `⏰ Reminder: ${r.text}\n\n👍 when it's done, or say "snooze 1h".`;
       await deliver(send, user, [say(text, { kind: "reminder", reminderId: r.id, text })]).catch((err) =>
-        console.warn(`[scheduler] reminder for ${user.id}:`, err),
+        console.warn(`[scheduler] reminder for ${maskId(user.id)}:`, err),
       );
     }
     // Keep the list short: drop reminders finished/sent over a week ago.
@@ -262,7 +262,7 @@ export async function tick(send: ProactiveSend, users?: UserState[]): Promise<vo
           ["jobs", () => jobDrops(user, simplify, send)],
         ];
         for (const [name, job] of jobs) {
-          await job().catch((err) => console.warn(`[scheduler] ${name} for ${user.id}:`, err));
+          await job().catch((err) => console.warn(`[scheduler] ${name} for ${maskId(user.id)}:`, err));
         }
       });
     }

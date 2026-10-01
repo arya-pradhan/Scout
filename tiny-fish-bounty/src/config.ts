@@ -64,6 +64,18 @@ export function normalizeSender(id: string): string {
   return digits.length === 10 ? `+1${digits}` : digits ? `+${digits}` : "";
 }
 
+/** Shortened sender id for logs, so a screen recording never shows a phone number or email. */
+export function maskId(id: string): string {
+  if (id.includes("@")) return `${id[0] ?? ""}•••@${id.split("@")[1]}`;
+  const digits = id.replace(/[^\d]/g, "");
+  return digits ? `•••${digits.slice(-4)}` : "unknown";
+}
+
+/** Terminal activity log (what Scout and TinyFish are doing). Silenced in tests with SCOUT_QUIET=1. */
+export function log(line: string): void {
+  if (process.env.SCOUT_QUIET !== "1") console.log(line);
+}
+
 export function isAllowed(senderId: string): boolean {
   return ALLOWED_SENDERS.length === 0 || ALLOWED_SENDERS.includes(normalizeSender(senderId));
 }

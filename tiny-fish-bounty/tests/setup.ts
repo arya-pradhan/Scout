@@ -13,6 +13,7 @@ process.env.ANTHROPIC_BASE_URL = "http://127.0.0.1:9";
 process.env.TINYFISH_API_KEY = "test-no-calls";
 process.env.TZ_NAME = "America/New_York";
 process.env.ALLOWED_PHONES = "";
+process.env.SCOUT_QUIET = "1";
 
 type Handler = (url: string, init?: RequestInit) => Response | Promise<Response> | undefined;
 let handler: Handler | undefined;

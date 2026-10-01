@@ -8,20 +8,68 @@ Everything for the submission: the 60-second demo script, the posts, and the che
 
 ---
 
-## 60-second demo script
+## Recording the 60-second demo
 
-**Setup before recording:** run `npm run dev` with `SCHEDULER_TICK_MS=60000`. Finish onboarding on your phone first (school, Canvas feed, a course site, events page, "marketing internships in Chicago" or your real ask). Screen-record the iPhone. Put the laptop terminal (Scout's logs) beside it, or cut to it. **Blur your phone number and never show the Canvas feed link.**
+**The plan:** record the iPhone screen and the laptop terminal at the same time, put them side by side in Clipchamp (it comes with Windows 11), and export one 1080p mp4. Upload that file **natively** to LinkedIn and X, and to **YouTube as Unlisted** for the site, the README and the submission.
 
-| Time | Shot | On screen / voiceover |
-|---|---|---|
-| 0:00–0:07 | **The moment.** Close-up of the phone, a late-night lock screen, a text notification from Scout. | VO: "It's 11pm. I have a deadline that only exists on my professor's website, and I don't know about tomorrow's career fair." |
-| 0:07–0:18 | **Proactive brief.** Open the thread: Scout's morning brief bubbles (📚 due soon · 🎉 on campus · 💼 new postings). | VO: "This is Scout. I never asked it anything. It texts me when something matters." |
-| 0:18–0:32 | **Real web work #1 (Fetch).** Text *"what's due this week?"*. Show the typing dots, then cut to the terminal log of TinyFish Fetch reading the course site's calendar pages. Scout replies with dated items and links. | Lower third: "TinyFish Fetch → crawls the professor's site". |
-| 0:32–0:47 | **Real web work #2 (Agent).** ❤️ a posting ("Saved to your tracker"), then text *"what does the application ask?"*. Scout: "Opening the application… 📝". Cut to the TinyFish run (logs or dashboard). Scout replies with the questions and documents. | Lower third: "TinyFish Agent → opens the real form, never submits". |
-| 0:47–0:57 | **Payoff.** ❤️ an event → the Google Calendar link → tap → Save. Text *"remind me at 9 to start the essay"* → the ⏰ reminder arrives → 👍 → "✅ checked off" (or confetti when the week is clear). | VO: "It asks before anything is added, and it never fakes a source." |
-| 0:57–1:00 | **End card.** "Scout 🧭 · built with Photon + TinyFish" + repo/site link. | |
+The terminal shows what Scout is doing live: `[in]` your text (phone number masked), `[scout] tool …` (which tool Claude picked), and `[tinyfish] search/fetch/agent …` (the real web work, with timings).
 
-Tips: keep each reply on screen long enough to read (~2s); speed up only the waiting. Record in light mode with a big font. Keep phone notifications off.
+### 1. Set up (10 minutes, once)
+**Phone**
+- [ ] **Save Scout as a contact,** so the thread header says "Scout" and not the number. Use the contact card Scout sent during onboarding (tap it → Create New Contact). If you can, use `site/static/fedora_companion.svg` exported as a PNG for its photo.
+- [ ] **Turn on a Focus that only lets Scout through:** Settings → Focus → Do Not Disturb → People → Allow notifications from: Scout. Turn it on before you record.
+- [ ] **Use light mode and a bigger text size.** Charge to over 50% so the battery icon isn't red.
+- [ ] **Don't scroll up in the thread** while recording: the onboarding messages higher up include your Canvas feed link. Send a few messages first so they're off screen.
+- [ ] **Add Screen Recording to Control Center:** Settings → Control Center → Screen Recording.
+
+**Laptop**
+- [ ] **Start Scout:** in `tiny-fish-bounty`, run `npm run dev`.
+- [ ] **Make the terminal big:** press Ctrl + = a few times in the terminal window and maximize it. Close other windows and notifications.
+- [ ] **Do one full dry run off camera** (the texts below) to check every reply works, then delete nothing. Real data is fine.
+
+### 2. Record (about 8 minutes of real time, cut down to 60s)
+1. Laptop: press **Win + Alt + R** with the terminal focused (Xbox Game Bar records that window). Or open Snipping Tool → Record → select the terminal.
+2. Phone: Control Center → **Screen Recording**, then open the Scout thread.
+3. Send these texts **in order**. Wait for each reply to finish before sending the next, and pause about 2 seconds on each reply so it's readable.
+
+| # | Do this on the phone | What you'll see | Terminal shows | Caption in the edit |
+|---|---|---|---|---|
+| 1 | Text: **remind me in 2 minutes to start the essay** | "⏰ Got it, I'll text you at …" | `[scout] tool set_reminder` | "You text Scout like a friend" |
+| 2 | Text: **what's due this week?** | Dated items with the professor's site link | `[scout] tool get_homework`, `[tinyfish] fetch … pages from <course site>` | "TinyFish Fetch: reads the professor's own site" |
+| 3 | Text: **any new marketing internships in Chicago?** (or your real field) | Fresh postings with links | `[scout] tool get_jobs`, `[tinyfish] search "…", last 3d → N results` | "TinyFish Search: postings from the last 3 days" |
+| 4 | ❤️ **that reply** (press and hold → heart) | "Saved … to your tracker" | `[tapback] •••1234: "❤️" → love` | "Tapbacks are controls" |
+| 5 | Text: **what does the first one's application ask for?** | "Opening the application… 📝", then the questions and documents (1–2 min) | `[scout] tool prep_application`, `[tinyfish] agent started: browsing …`, `agent COMPLETED in 74s` | "TinyFish Agent: opens the real form. Read-only, never submits" |
+| 6 | **Lock the phone** and wait for the reminder from step 1 | The ⏰ notification on the lock screen | (nothing) | "It texts you first" |
+| 7 | Tap the notification, then 👍 the reminder | "✅ Checked off" | `[tapback] … → like` | |
+| 8 | Text: **anything with free food this week?** | An event with its link | `[scout] tool get_events` | "Campus events from your school's own site" |
+| 9 | ❤️ the event, tap the Google Calendar link, tap **Save** | The calendar event, pre-filled | `[tapback] … → love` | "You approve every add" |
+
+4. Stop both recordings. The phone video is in Photos (AirDrop or iCloud it to the laptop). The laptop video is in `Videos\Captures`.
+
+If the Agent in step 5 times out or a reply looks off, just send the text again. You'll cut the retries anyway.
+
+### 3. Edit in Clipchamp (about 20 minutes)
+1. **Create the video:** Create a new video at **16:9**. Drag in both recordings.
+2. **Arrange the layout:**
+   - **Phone:** on the left, scaled to fill the height.
+   - **Terminal:** on the right, cropped to the log lines.
+   - **Background:** a dark green (#1f3128) to match the site.
+3. **Sync the clips:** line up each text you send with its `[in]` line appearing in the terminal.
+4. **Cut it down:**
+   - **Waits:** cut them, or speed them up to 4–8× (Agent runs especially), with a small "⏩ 1 min later" text.
+   - **Order:** keep about 1:00. Steps 2, 3, 5 and 6 matter most; 8 and 9 can be quick.
+5. **Add text:**
+   - **Captions:** the ones in the table, as text boxes.
+   - **Start card (2s):** "It's 11pm. Deadlines on a prof's site, an internship that just opened, a free-food event you'd miss."
+   - **End card (2s):** "Scout · Photon + TinyFish" plus the GitHub link.
+6. **Audio:** music from Clipchamp's library (or your voiceover). Export at **1080p**.
+
+### 4. Publish
+1. **YouTube:** upload the mp4 as **Unlisted**, titled "Scout: a study copilot over iMessage (Photon + TinyFish)". Send the link to Claude to embed on the site and in the README.
+2. **LinkedIn (required) and X:** upload the **mp4 itself** (not the YouTube link) with the posts below, tagging TinyFish and Photon.
+3. **Discord #showcase:** the YouTube link plus the blurb below.
+
+**Never on screen:** API keys, `.env`, your phone number, your Canvas feed link. The terminal logs already mask the number and only print site host names.
 
 ---
 
