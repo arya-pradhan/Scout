@@ -87,8 +87,8 @@ If the Agent in step 5 times out or a reply looks off, just send the text again.
 > It works at any school: onboarding over text asks where your school posts events and what jobs you want, in any field.
 >
 > Built for the TinyFish Students program × Photon iMessage bounty. Demo 👇
-> Code: https://github.com/arya-pradhan/tiny-fish-iMessage-Assistant
-> Site: [your Vercel link]
+> Code: https://github.com/arya-pradhan/Scout
+> Site: [[Scout](https://scout-site-eight.vercel.app/)]
 >
 > @TinyFish @Photon #AIagents #iMessage #buildinpublic
 
