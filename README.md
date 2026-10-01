@@ -6,7 +6,7 @@ Built for the **TinyFish × Photon "Build Your Own AI Assistant on iMessage"** b
 Photon Spectrum is the messaging layer; TinyFish (Search, Fetch and Agent) is the web layer; Claude (Sonnet 5.5) is the brain.
 
 <!-- TODO: replace with your 60-second demo video (X/LinkedIn/YouTube link or a GIF) -->
-**▶ Demo video:** _coming soon_ · **🌐 Showcase site:** _add your Vercel link_
+**▶ Demo video:** _coming soon_ · [**🌐 Showcase site:**](https://scout-site-eight.vercel.app/)
 
 ---
 
