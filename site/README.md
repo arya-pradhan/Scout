@@ -10,7 +10,7 @@ A static page with no build step:
 To preview locally, open `index.html` in a browser, or run `npx serve site` from the repo root.
 
 ## Deploy on Vercel
-1. In Vercel, **Add New → Project** and import `arya-pradhan/tiny-fish-iMessage-Assistant`.
+1. In Vercel, **Add New → Project** and import `arya-pradhan/Scout`.
 2. Set **Root Directory** to `site` and **Framework Preset** to **Other** (no build command, no output directory).
 3. Deploy. Every push to `main` redeploys automatically.
 
