@@ -16,8 +16,8 @@ To preview locally, open `index.html` in a browser, or run `npx serve site` from
 
 Or from this folder: `npx vercel` (then `npx vercel --prod`).
 
-## Add the demo video
-In `index.html`, find the `<!-- Replace this div's contents with your demo … -->` comment in the **Demo** section and paste a YouTube embed (`<iframe src="https://www.youtube.com/embed/VIDEO_ID" …>`) or drop `demo.mp4` in this folder and use `<video src="demo.mp4" controls playsinline></video>`.
+## The demo video
+`demo.mp4` (1:05, 1080p) plays in the **Demo** section, with `static/demo-poster.jpg` as its cover image. To swap it, replace both files with the same names and push.
 
 ## Edit the story
 Each `<li class="chapter">` in `index.html` is one moment of the day: `data-time` is minutes after midnight (e.g. `915` = 3:15 PM), `data-chips` lights up the TinyFish endpoints, and `data-mood` sets the mascot's reaction (`tip`, `scan`, `work`, `happy`, `sleep`). Inside `.transcript`, use `.m.in` / `.m.out` bubbles, `.m.typing`, `.m.tapback` (`data-emoji`), `.m.link` (`data-icon`, `data-domain`), `.m.stamp`, plus `data-island` for the Dynamic Island and `data-confetti`.
